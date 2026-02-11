@@ -14,8 +14,8 @@ Track Claude Code session duration with automatic timestamps.
 ### Option 1: From Marketplace (recommended)
 
 ```bash
-# Add the marketplace
-claude plugin marketplace add aguinaldotupy/claude-code-plugins
+# Add as a standalone marketplace plugin
+claude plugin marketplace add aguinaldotupy/claude-session-tracker
 
 # Install the plugin
 claude plugin install session-tracker@aguinaldotupy --scope user
@@ -26,16 +26,16 @@ claude plugin install session-tracker@aguinaldotupy --scope user
 ### Option 2: Local Install (development)
 
 ```bash
-git clone https://github.com/aguinaldotupy/session-tracker.git
-claude --plugin-dir ./session-tracker
+git clone https://github.com/aguinaldotupy/claude-session-tracker.git
+claude --plugin-dir ./claude-session-tracker
 ```
 
 ### Option 3: Manual Install
 
 ```bash
 # Clone into the plugins directory
-git clone https://github.com/aguinaldotupy/session-tracker.git \
-  ~/.claude/plugins/marketplaces/session-tracker
+git clone https://github.com/aguinaldotupy/claude-session-tracker.git \
+  ~/.claude/plugins/marketplaces/claude-session-tracker
 ```
 
 Then enable in `~/.claude/settings.json`:
@@ -43,7 +43,7 @@ Then enable in `~/.claude/settings.json`:
 ```json
 {
   "enabledPlugins": {
-    "session-tracker@session-tracker": true
+    "session-tracker@claude-session-tracker": true
   }
 }
 ```
