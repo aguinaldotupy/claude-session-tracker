@@ -9,14 +9,14 @@ Reports current Claude Code session elapsed time.
 
 ## Mechanism
 
-A `SessionStart` hook writes `$(date +%s)` to `/tmp/claude-session-$PPID` when the session begins. A `SessionEnd` hook removes it.
+A `SessionStart` hook writes `$(date +%s)` to a file inside the plugin directory and exports `CLAUDE_SESSION_FILE` via `CLAUDE_ENV_FILE`. The session ID is stable across compaction, so the timestamp survives context resets. A `SessionEnd` hook cleans up.
 
 ## Usage
 
 Run this to get session elapsed time:
 
 ```bash
-start=$(cat /tmp/claude-session-$PPID 2>/dev/null)
+start=$(cat "$CLAUDE_SESSION_FILE" 2>/dev/null)
 if [ -n "$start" ]; then
   now=$(date +%s)
   elapsed=$((now - start))

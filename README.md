@@ -4,8 +4,8 @@ Track Claude Code session duration with automatic timestamps.
 
 ## Features
 
-- **SessionStart hook** - saves timestamp to `/tmp/claude-session-$PPID`
-- **SessionEnd hook** - cleans up temp file
+- **SessionStart hook** - saves timestamp in plugin directory, exports `CLAUDE_SESSION_FILE` env var
+- **SessionEnd hook** - cleans up session file
 - **`/session-status` skill** - check elapsed time anytime
 - **Status line snippet** - optional integration for live timer display
 
@@ -74,32 +74,9 @@ Session: 1h 23m (started at 14:30)
 
 ## Status Line (optional)
 
-To show a live elapsed time in the status line, add the snippet from `statusline-snippet.sh` to your `~/.claude/statusline-command.sh`:
+To show elapsed time in the status line, copy the contents of `statusline-snippet.sh` into your `~/.claude/statusline-command.sh`.
 
-```bash
-# Session elapsed time
-session_time=""
-session_file="/tmp/claude-session-$PPID"
-if [ -f "$session_file" ]; then
-    start=$(cat "$session_file")
-    now=$(date +%s)
-    elapsed=$((now - start))
-    hours=$((elapsed / 3600))
-    minutes=$(((elapsed % 3600) / 60))
-    if [ $hours -gt 0 ]; then
-        session_time="${hours}h${minutes}m"
-    else
-        session_time="${minutes}m"
-    fi
-fi
-
-# Append to your printf output
-if [ -n "$session_time" ]; then
-    printf " \033[33m%s\033[0m" "$session_time"
-fi
-```
-
-Example status line output:
+Example output:
 
 ```
 tupy@host:project (main*) [Opus 4.6] 45m
@@ -107,10 +84,10 @@ tupy@host:project (main*) [Opus 4.6] 45m
 
 ## How It Works
 
-1. `SessionStart` hook writes Unix timestamp to `/tmp/claude-session-$PPID`
-2. `$PPID` is the Claude Code process PID - unique per session
-3. `/session-status` reads the file and calculates elapsed time
-4. `SessionEnd` hook removes the file on exit
+1. On session start, a timestamp is saved to the plugin directory as `session-tracker-$SESSION_ID` and the full path is exported as `CLAUDE_SESSION_FILE` via `CLAUDE_ENV_FILE`
+2. The session ID is stable across context compaction, so the timestamp survives compact and resume without extra hooks
+3. `/session-status` and the statusline read the file using `$CLAUDE_SESSION_FILE`
+4. On session end, the session file is cleaned up
 
 ## Managing the Plugin
 
@@ -131,7 +108,7 @@ claude plugin update session-tracker@aguinaldotupy --scope user
 ## Requirements
 
 - Claude Code >= 2.1.x
-- bash, date, cat (standard on macOS and Linux)
+- bash, date, cat, jq (standard on macOS and Linux; install jq if missing)
 
 ## License
 

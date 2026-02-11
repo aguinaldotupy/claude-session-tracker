@@ -2,12 +2,12 @@
 # Session elapsed time snippet for status line scripts.
 # Copy this block into your ~/.claude/statusline-command.sh
 #
+# Requires CLAUDE_SESSION_FILE env var (set by session-tracker plugin)
 # Outputs: session_time variable (e.g. "5m", "2h15m", or empty)
 
 session_time=""
-session_file="/tmp/claude-session-$PPID"
-if [ -f "$session_file" ]; then
-    start=$(cat "$session_file")
+if [ -n "${CLAUDE_SESSION_FILE:-}" ] && [ -f "$CLAUDE_SESSION_FILE" ]; then
+    start=$(cat "$CLAUDE_SESSION_FILE")
     now=$(date +%s)
     elapsed=$((now - start))
     hours=$((elapsed / 3600))
