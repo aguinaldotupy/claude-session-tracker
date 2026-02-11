@@ -9,28 +9,36 @@ Track Claude Code session duration with automatic timestamps.
 - **`/session-status` skill** - check elapsed time anytime
 - **Status line snippet** - optional integration for live timer display
 
-## Install
+## Installation
 
-Add the marketplace to `~/.claude/settings.json`:
-
-```json
-{
-  "pluginMarketplaces": [
-    "https://github.com/aguinaldotupy/claude-code-plugins"
-  ],
-  "enabledPlugins": {
-    "session-tracker@aguinaldotupy": true
-  }
-}
-```
-
-Or install locally for development:
+### Option 1: From Marketplace (recommended)
 
 ```bash
-git clone https://github.com/aguinaldotupy/session-tracker ~/.claude/plugins/marketplaces/session-tracker
+# Add the marketplace
+claude plugin marketplace add aguinaldotupy/claude-code-plugins
+
+# Install the plugin
+claude plugin install session-tracker@aguinaldotupy --scope user
+
+# Restart Claude Code to activate hooks
 ```
 
-Then enable in settings:
+### Option 2: Local Install (development)
+
+```bash
+git clone https://github.com/aguinaldotupy/session-tracker.git
+claude --plugin-dir ./session-tracker
+```
+
+### Option 3: Manual Install
+
+```bash
+# Clone into the plugins directory
+git clone https://github.com/aguinaldotupy/session-tracker.git \
+  ~/.claude/plugins/marketplaces/session-tracker
+```
+
+Then enable in `~/.claude/settings.json`:
 
 ```json
 {
@@ -40,13 +48,58 @@ Then enable in settings:
 }
 ```
 
+### Verify Installation
+
+Inside a Claude Code session:
+
+```
+/plugin
+```
+
+Navigate to the **Installed** tab - `session-tracker` should appear.
+
 ## Usage
 
-Ask Claude: "how long is this session?" or type `/session-status`.
+Type `/session-status` or ask naturally:
+
+- "how long is this session?"
+- "quanto tempo de sessao?"
+- "session duration"
+
+Example output:
+
+```
+Session: 1h 23m (started at 14:30)
+```
 
 ## Status Line (optional)
 
-To show elapsed time in the status line, add the snippet from `statusline-snippet.sh` to your `~/.claude/statusline-command.sh`. Example output:
+To show a live elapsed time in the status line, add the snippet from `statusline-snippet.sh` to your `~/.claude/statusline-command.sh`:
+
+```bash
+# Session elapsed time
+session_time=""
+session_file="/tmp/claude-session-$PPID"
+if [ -f "$session_file" ]; then
+    start=$(cat "$session_file")
+    now=$(date +%s)
+    elapsed=$((now - start))
+    hours=$((elapsed / 3600))
+    minutes=$(((elapsed % 3600) / 60))
+    if [ $hours -gt 0 ]; then
+        session_time="${hours}h${minutes}m"
+    else
+        session_time="${minutes}m"
+    fi
+fi
+
+# Append to your printf output
+if [ -n "$session_time" ]; then
+    printf " \033[33m%s\033[0m" "$session_time"
+fi
+```
+
+Example status line output:
 
 ```
 tupy@host:project (main*) [Opus 4.6] 45m
@@ -58,6 +111,22 @@ tupy@host:project (main*) [Opus 4.6] 45m
 2. `$PPID` is the Claude Code process PID - unique per session
 3. `/session-status` reads the file and calculates elapsed time
 4. `SessionEnd` hook removes the file on exit
+
+## Managing the Plugin
+
+```bash
+# Disable without uninstalling
+claude plugin disable session-tracker@aguinaldotupy --scope user
+
+# Re-enable
+claude plugin enable session-tracker@aguinaldotupy --scope user
+
+# Uninstall
+claude plugin uninstall session-tracker@aguinaldotupy --scope user
+
+# Update to latest version
+claude plugin update session-tracker@aguinaldotupy --scope user
+```
 
 ## Requirements
 
