@@ -1,0 +1,12 @@
+{
+  "name": "aguinaldotupy",
+  "owner": {
+    "name": "Aguinaldo Tupy"
+  },
+  "plugins": [
+    {
+      "name": "session-tracker",
+      "source": "./"
+    }
+  ]
+}
