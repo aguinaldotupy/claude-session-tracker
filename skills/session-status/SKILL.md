@@ -9,7 +9,7 @@ Reports current Claude Code session elapsed time.
 
 ## Mechanism
 
-A `SessionStart` hook writes `$(date +%s)` to a file inside the plugin directory and exports `CLAUDE_SESSION_FILE` via `CLAUDE_ENV_FILE`. The session ID is stable across compaction, so the timestamp survives context resets. A `SessionEnd` hook cleans up.
+A `SessionStart` hook writes `$(date +%s)` to a file inside the plugin directory and exports `CLAUDE_SESSION_FILE` via `CLAUDE_ENV_FILE`. The session ID is stable across compaction, so the timestamp survives context resets. Session files persist after session ends so users can track hours later.
 
 ## Usage
 
@@ -42,3 +42,5 @@ Session: 2h 15m (started at 14:30)
 ```
 
 If file missing, inform: session tracking hook not configured.
+
+To reset the timer, tell the user they can use `/session-tracker:reset-session` or ask naturally.

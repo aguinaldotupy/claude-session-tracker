@@ -3,14 +3,18 @@ set -euo pipefail
 
 INPUT=$(cat)
 SOURCE=$(echo "$INPUT" | jq -r '.source // "startup"')
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id')
 
-SESSION_FILE="$CLAUDE_PLUGIN_ROOT/session-tracker-$SESSION_ID"
+# Derive session directory from CLAUDE_ENV_FILE (cross-platform)
+# Path: ~/.claude/session-env/<session_id>/session-tracker
+if [ -z "${CLAUDE_ENV_FILE:-}" ]; then
+  exit 0
+fi
+
+SESSION_DIR="$(dirname "$CLAUDE_ENV_FILE")"
+SESSION_FILE="$SESSION_DIR/session-tracker"
 
 # Export session file path for Bash tool commands and statusline
-if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
-  echo "export CLAUDE_SESSION_FILE=$SESSION_FILE" >> "$CLAUDE_ENV_FILE"
-fi
+echo "export CLAUDE_SESSION_FILE=\"$SESSION_FILE\"" >> "$CLAUDE_ENV_FILE"
 
 # Only create timestamp on new or cleared sessions
 if [ "$SOURCE" = "startup" ] || [ "$SOURCE" = "clear" ]; then

@@ -5,8 +5,10 @@ Track Claude Code session duration with automatic timestamps.
 ## Features
 
 - **SessionStart hook** - saves timestamp in plugin directory, exports `CLAUDE_SESSION_FILE` env var
-- **SessionEnd hook** - cleans up session file
-- **`/session-status` skill** - check elapsed time anytime
+- **Persistent session files** - session data survives session end so you can track hours later
+- **`/session-tracker:session-status` skill** - check elapsed time anytime
+- **`/session-tracker:reset-session` command** - reset the timer to zero
+- **Auto-reset on `/clear`** - clearing the session automatically restarts the timer
 - **Status line snippet** - optional integration for live timer display
 
 ## Installation
@@ -60,7 +62,9 @@ Navigate to the **Installed** tab - `session-tracker` should appear.
 
 ## Usage
 
-Type `/session-status` or ask naturally:
+### Check Session Time
+
+Type `/session-tracker:session-status` or ask naturally:
 
 - "how long is this session?"
 - "quanto tempo de sessao?"
@@ -71,6 +75,16 @@ Example output:
 ```
 Session: 1h 23m (started at 14:30)
 ```
+
+### Reset Timer
+
+Type `/session-tracker:reset-session` or ask naturally:
+
+- "reset the session timer"
+- "reiniciar o tempo"
+- "restart timer"
+
+The timer resets to zero from the current time. The `/clear` command also resets the timer automatically.
 
 ## Status Line (optional)
 
@@ -86,8 +100,9 @@ tupy@host:project (main*) [Opus 4.6] 45m
 
 1. On session start, a timestamp is saved to the plugin directory as `session-tracker-$SESSION_ID` and the full path is exported as `CLAUDE_SESSION_FILE` via `CLAUDE_ENV_FILE`
 2. The session ID is stable across context compaction, so the timestamp survives compact and resume without extra hooks
-3. `/session-status` and the statusline read the file using `$CLAUDE_SESSION_FILE`
-4. On session end, the session file is cleaned up
+3. `/session-tracker:session-status` and the statusline read the file using `$CLAUDE_SESSION_FILE`
+4. Session files persist after session end - no data is lost when closing Claude Code
+5. Using `/clear` or starting a new session creates a fresh timestamp
 
 ## Managing the Plugin
 
