@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="art/github-header-banner.png" alt="Session Tracker" />
+</p>
+
 # session-tracker
 
 Track Claude Code session duration with automatic timestamps.
