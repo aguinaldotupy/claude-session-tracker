@@ -9,11 +9,11 @@ Reports current Claude Code session elapsed time.
 
 ## Mechanism
 
-A `SessionStart` hook writes `$(date +%s)` to a file inside the plugin directory and exports `CLAUDE_SESSION_FILE` via `CLAUDE_ENV_FILE`. The session ID is stable across compaction, so the timestamp survives context resets. Session files persist after session ends so users can track hours later.
+A `SessionStart` hook writes `$(date +%s)` to `~/.claude/session-env/<session_id>/session-tracker`. The session ID is stable across compaction, so the timestamp survives context resets. The hook outputs `CLAUDE_SESSION_FILE=<path>` — use that path in the command below.
 
 ## Usage
 
-Run this to get session elapsed time:
+Run this to get session elapsed time (replace `$CLAUDE_SESSION_FILE` with the path from the SessionStart hook output):
 
 ```bash
 start=$(cat "$CLAUDE_SESSION_FILE" 2>/dev/null)

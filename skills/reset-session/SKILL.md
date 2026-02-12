@@ -9,10 +9,10 @@ Resets the session elapsed time counter by overwriting the timestamp file with t
 
 ## Usage
 
-Run this command:
+Run this command (replace `$CLAUDE_SESSION_FILE` with the path from the SessionStart hook output):
 
 ```bash
-if [ -n "${CLAUDE_SESSION_FILE:-}" ] && [ -f "$CLAUDE_SESSION_FILE" ]; then
+if [ -f "$CLAUDE_SESSION_FILE" ]; then
   echo "$(date +%s)" > "$CLAUDE_SESSION_FILE"
   echo "Session timer reset at $(date '+%H:%M')"
 else
