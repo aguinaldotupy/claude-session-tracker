@@ -28,6 +28,36 @@ set -uo pipefail
   DURATION=$((END_TS - START_TS))
   [ "$DURATION" -lt 0 ] && DURATION=0
 
+  # Compute idle/active from events.log. Idle = sum of (next-prompt - stop) gaps
+  # that exceed the threshold. Active = duration - idle. Defaults to no idle if
+  # events file is missing (e.g. session installed before this version).
+  IDLE_THRESHOLD="${SESSION_IDLE_THRESHOLD_SECONDS:-300}"
+  EVENTS_FILE="$SESSION_DIR/events.log"
+  IDLE_SECONDS=0
+  if [ -f "$EVENTS_FILE" ]; then
+    IDLE_SECONDS=$(awk -v th="$IDLE_THRESHOLD" -v end="$END_TS" '
+      { kind=$1; ts=$2+0 }
+      kind=="S" { last_stop=ts; have_stop=1; next }
+      kind=="P" && have_stop {
+        gap = ts - last_stop
+        if (gap > th) idle += gap
+        have_stop=0
+      }
+      END {
+        if (have_stop) {
+          gap = end - last_stop
+          if (gap > th) idle += gap
+        }
+        printf "%d", idle+0
+      }
+    ' "$EVENTS_FILE" 2>/dev/null || echo 0)
+    case "$IDLE_SECONDS" in
+      ''|*[!0-9]*) IDLE_SECONDS=0 ;;
+    esac
+  fi
+  [ "$IDLE_SECONDS" -gt "$DURATION" ] && IDLE_SECONDS="$DURATION"
+  ACTIVE_SECONDS=$((DURATION - IDLE_SECONDS))
+
   # Resolve issue key: explicit tag file wins, else branch heuristic, else empty.
   ISSUE_KEY=""
   TAG_FILE="$SESSION_DIR/issue-tag"
@@ -50,10 +80,12 @@ set -uo pipefail
     --argjson start_ts "$START_TS" \
     --argjson end_ts "$END_TS" \
     --argjson duration_seconds "$DURATION" \
+    --argjson active_seconds "$ACTIVE_SECONDS" \
+    --argjson idle_seconds "$IDLE_SECONDS" \
     --arg project_dir "$CWD" \
     --arg reason "$REASON" \
     --arg issue_key "$ISSUE_KEY" \
-    '{session_id:$session_id,start_ts:$start_ts,end_ts:$end_ts,duration_seconds:$duration_seconds,project_dir:$project_dir,reason:$reason,issue_key:$issue_key}')
+    '{session_id:$session_id,start_ts:$start_ts,end_ts:$end_ts,duration_seconds:$duration_seconds,active_seconds:$active_seconds,idle_seconds:$idle_seconds,project_dir:$project_dir,reason:$reason,issue_key:$issue_key}')
 
   [ -z "$LINE" ] && exit 0
 

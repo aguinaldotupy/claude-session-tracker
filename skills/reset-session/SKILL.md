@@ -14,6 +14,8 @@ Run this command (replace `$CLAUDE_SESSION_FILE` with the path from the SessionS
 ```bash
 if [ -f "$CLAUDE_SESSION_FILE" ]; then
   echo "$(date +%s)" > "$CLAUDE_SESSION_FILE"
+  # Also clear active/idle event history so the new window starts clean.
+  : > "$(dirname "$CLAUDE_SESSION_FILE")/events.log"
   echo "Session timer reset at $(date '+%H:%M')"
 else
   echo "Session file not found - session-tracker hook may not be active"

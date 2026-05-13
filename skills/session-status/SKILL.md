@@ -11,6 +11,8 @@ Reports current Claude Code session elapsed time.
 
 A `SessionStart` hook writes `$(date +%s)` to `~/.claude/session-env/<session_id>/session-tracker`. The session ID is stable across compaction, so the timestamp survives context resets. The hook outputs `CLAUDE_SESSION_FILE=<path>` — use that path in the command below.
 
+`UserPromptSubmit` and `Stop` hooks append `P <ts>` / `S <ts>` lines to `events.log` in the same directory. Active vs idle time is derived from those events: any gap between a `Stop` and the next `UserPromptSubmit` longer than `SESSION_IDLE_THRESHOLD_SECONDS` (default 300) counts as idle.
+
 ## Usage
 
 Run this to get session elapsed time (replace `$CLAUDE_SESSION_FILE` with the path from the SessionStart hook output):
@@ -20,14 +22,25 @@ start=$(cat "$CLAUDE_SESSION_FILE" 2>/dev/null)
 if [ -n "$start" ]; then
   now=$(date +%s)
   elapsed=$((now - start))
-  hours=$((elapsed / 3600))
-  minutes=$(((elapsed % 3600) / 60))
-  started=$(date -r "$start" "+%H:%M" 2>/dev/null || date -d "@$start" "+%H:%M" 2>/dev/null)
-  if [ $hours -gt 0 ]; then
-    echo "Session: ${hours}h ${minutes}m (started at ${started})"
-  else
-    echo "Session: ${minutes}m (started at ${started})"
+
+  # Idle: sum gaps between Stop and next UserPromptSubmit that exceed threshold.
+  THRESHOLD="${SESSION_IDLE_THRESHOLD_SECONDS:-300}"
+  EVENTS="$(dirname "$CLAUDE_SESSION_FILE")/events.log"
+  idle=0
+  if [ -f "$EVENTS" ]; then
+    idle=$(awk -v th="$THRESHOLD" -v now="$now" '
+      { kind=$1; ts=$2+0 }
+      kind=="S" { last=ts; have=1; next }
+      kind=="P" && have { g=ts-last; if (g>th) i+=g; have=0 }
+      END { if (have) { g=now-last; if (g>th) i+=g } printf "%d", i+0 }
+    ' "$EVENTS")
   fi
+  [ "$idle" -gt "$elapsed" ] && idle="$elapsed"
+  active=$((elapsed - idle))
+
+  fmt() { h=$(( $1 / 3600 )); m=$(( ($1 % 3600) / 60 )); [ "$h" -gt 0 ] && printf '%dh %dm' "$h" "$m" || printf '%dm' "$m"; }
+  started=$(date -r "$start" "+%H:%M" 2>/dev/null || date -d "@$start" "+%H:%M" 2>/dev/null)
+  echo "Session: $(fmt "$elapsed") (active: $(fmt "$active"), idle: $(fmt "$idle"), started at ${started})"
 else
   echo "Session file not found - hook may not be configured"
 fi
@@ -82,10 +95,12 @@ fi
 Display to user:
 
 ```
-Session: 2h 15m (started at 14:30)
+Session: 2h 15m (active: 1h 50m, idle: 25m, started at 14:30)
 Today: 5h 42m (across finished + current sessions)
 Current issue: LIN-456
 ```
+
+Idle threshold is configurable via the `SESSION_IDLE_THRESHOLD_SECONDS` env var (default 300 = 5 minutes).
 
 If the current session file is missing, inform: session tracking hook not configured.
 If only the history file is missing, still show the live session and skip the Today line (or show it equal to the live elapsed).
