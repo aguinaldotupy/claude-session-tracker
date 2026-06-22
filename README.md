@@ -158,7 +158,7 @@ Example output:
 tupy@host:project (main*) [Opus 4.6] 45m
 ```
 
-The time shown is **active** (working) time — the same number `session-status` headlines, not wall-clock.
+The time shown is **active** (working) time — the same number `session-status` headlines, not wall-clock. On a fresh or partially configured install, before `events.log` and the deployed `active-time.awk` exist, it falls back to wall-clock.
 
 ## How It Works
 
