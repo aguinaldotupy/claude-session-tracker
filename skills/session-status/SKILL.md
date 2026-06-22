@@ -51,7 +51,7 @@ fi
 
 ## Daily Total (additional)
 
-After showing the live session, also report today's accumulated total by summing `duration_seconds` from `$HOME/.claude/session-env/history.jsonl` for entries whose `start_ts` falls on today's local date, and adding the current live elapsed:
+After showing the live session, also report today's accumulated total by summing active (working) seconds from `$HOME/.claude/session-env/history.jsonl` for entries whose `start_ts` falls on today's local date, and adding the current live active time:
 
 ```bash
 HISTORY="$HOME/.claude/session-env/history.jsonl"
@@ -60,16 +60,16 @@ if [ -f "$HISTORY" ]; then
   today=$(date +%Y-%m-%d)
   today_past=$(jq -s --arg today "$today" '
     map(select((.start_ts | strflocaltime("%Y-%m-%d")) == $today))
-    | map(.duration_seconds) | add // 0
+    | map(.active_seconds // 0) | add // 0
   ' "$HISTORY")
 fi
-total_today=$((today_past + elapsed))
+total_today=$((today_past + active))
 th=$((total_today / 3600))
 tm=$(((total_today % 3600) / 60))
 if [ $th -gt 0 ]; then
-  echo "Today: ${th}h ${tm}m (across finished + current sessions)"
+  echo "Trabalho hoje: ${th}h ${tm}m (sessões concluídas + atual)"
 else
-  echo "Today: ${tm}m (across finished + current sessions)"
+  echo "Trabalho hoje: ${tm}m (sessões concluídas + atual)"
 fi
 ```
 
@@ -99,14 +99,14 @@ Display to user:
 
 ```
 Trabalho: 1h 50m · sessão aberta há 2h 15m (idle 25m, desde 14:30)
-Today: 5h 42m (across finished + current sessions)
+Trabalho hoje: 5h 42m (sessões concluídas + atual)
 Current issue: LIN-456
 ```
 
 The reading grace after each Stop is configurable via `SESSION_IDLE_THRESHOLD_SECONDS` (default 120 = 2 minutes). Active time is the headline; wall-clock ("aberta há…") is shown as context only.
 
 If the current session file is missing, inform: session tracking hook not configured.
-If only the history file is missing, still show the live session and skip the Today line (or show it equal to the live elapsed).
+If only the history file is missing, still show the live session and skip the Trabalho hoje line (or show it equal to the live active).
 
 To reset the live timer, tell the user they can use `/session-tracker:reset-session` or ask naturally.
 To see a full worklog, suggest `/session-tracker:session-history`.
