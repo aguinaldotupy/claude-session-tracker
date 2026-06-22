@@ -4,13 +4,14 @@
 
 **Goal:** Make each session report real working time (additive, prompt→stop bracket + bounded reading grace) instead of inflating wall-clock, so concurrent sessions on the same project stay consistent; add tool heartbeats for a forensic timeline.
 
-**Architecture:** A single canonical awk program (`hooks/lib/active-time.awk`) computes active seconds from one `events.log`. Two new hooks append tool heartbeats (`T`/`D`). `session-end.sh` and the statusline/skills all surface *active* as the headline number, demoting wall-clock to metadata. The statusline and skill snippets inline an equivalent of the awk because they are copied out of the plugin and cannot reference plugin-internal files.
+**Architecture:** The additive computation lives in exactly one file, `hooks/lib/active-time.awk`. `session-end.sh` calls it as a sibling. Consumers that run outside the plugin directory (the statusline copied into `~/.claude/`, and the skill snippets run in the user's shell) call a deployed copy of that same file at a stable path, `$HOME/.claude/session-env/active-time.awk`, which `session-start.sh` refreshes on every start. Two new hooks append tool heartbeats (`T`/`D`). All surfaces show *active* as the headline number, demoting wall-clock to metadata.
 
 **Tech Stack:** POSIX `sh`/`bash`, one-true-awk (BSD awk on macOS — no `strftime`, arrays OK), `jq`, plain-bash test harness (no framework).
 
 ## Global Constraints
 
-- **Hooks must never block.** Every hook runs under `set -uo pipefail`, wraps its body in `{ ... } || exit 0`, and ends with `exit 0`. A tracker failure must never interrupt the user's session.
+- **Hooks must never block.** Every hook runs under `set -uo pipefail` (except `session-start.sh`, which keeps its existing `set -euo pipefail`), wraps its body so a failure cannot interrupt the session, and ends with `exit 0` (or otherwise never returns non-zero on tracker errors).
+- **Single source for the active algorithm.** The additive logic exists only in `hooks/lib/active-time.awk`. No consumer reimplements or inlines it. In-plugin callers reference the sibling file; out-of-plugin callers reference the deployed copy at `$HOME/.claude/session-env/active-time.awk`. If a consumer cannot find its awk file, it falls back to wall-clock.
 - **Detail level B only.** Heartbeats log the tool *type* (`Edit`, `Bash`), never arguments, paths, or command contents.
 - **`events.log` line format** (whitespace-separated, time-ordered, append-only):
   `P <ts>` prompt · `T <ts> <Tool>` tool start · `D <ts> <Tool>` tool done · `S <ts>` stop.
@@ -198,7 +199,88 @@ git commit -m "feat: add additive active-time awk library with unit tests"
 
 ---
 
-### Task 2: Tool-heartbeat hooks (Pre/PostToolUse)
+### Task 2: Deploy the awk to a stable path from `session-start.sh`
+
+So out-of-plugin consumers (statusline, skills) share the one awk source without duplicating logic or resolving the plugin path.
+
+**Files:**
+- Modify: `hooks/session-start.sh`
+- Create: `tests/session-start.test.sh`
+
+**Interfaces:**
+- Consumes: `hooks/lib/active-time.awk` (Task 1), sibling of the hook (`<hook dir>/lib/active-time.awk`).
+- Produces: a copy at `$HOME/.claude/session-env/active-time.awk`, refreshed on every SessionStart.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/session-start.test.sh`:
+
+```bash
+#!/usr/bin/env bash
+set -uo pipefail
+DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$DIR/lib.sh"
+ROOT="$DIR/.."
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+export HOME="$TMP"
+SID="start-session-1"
+
+echo '{"session_id":"'"$SID"'","source":"startup"}' | bash "$ROOT/hooks/session-start.sh" >/dev/null
+
+DEPLOYED="$TMP/.claude/session-env/active-time.awk"
+assert_eq "awk deployed to stable path" "yes" "$([ -f "$DEPLOYED" ] && echo yes || echo no)"
+if diff -q "$ROOT/hooks/lib/active-time.awk" "$DEPLOYED" >/dev/null 2>&1; then d=same; else d=diff; fi
+assert_eq "deployed copy matches source" "same" "$d"
+# Existing behavior preserved: start timestamp written
+assert_eq "start timestamp written" "yes" \
+  "$([ -f "$TMP/.claude/session-env/$SID/session-tracker" ] && echo yes || echo no)"
+
+finish
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `bash tests/session-start.test.sh`
+Expected: FAIL — `awk deployed to stable path` is `no` (session-start does not yet copy the lib).
+
+- [ ] **Step 3: Add the deploy block to `session-start.sh`**
+
+In `hooks/session-start.sh`, immediately after the `mkdir -p "$SESSION_DIR"` line, insert:
+
+```bash
+
+# Deploy the canonical active-time awk to a stable, plugin-independent path so
+# the statusline and skills (which run outside the plugin dir) share one impl.
+AWK_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/active-time.awk"
+if [ -f "$AWK_SRC" ]; then
+  cp -f "$AWK_SRC" "$HOME/.claude/session-env/active-time.awk" 2>/dev/null || true
+fi
+```
+
+(The script keeps its existing `set -euo pipefail`; the `cp ... || true` guard prevents the deploy from ever aborting startup.)
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `bash tests/session-start.test.sh`
+Expected: PASS — `3 run, 0 failed`.
+
+- [ ] **Step 5: Run the full suite (no regressions)**
+
+Run: `bash tests/run.sh`
+Expected: PASS — active-time (9) and session-start (3), all `0 failed`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add hooks/session-start.sh tests/session-start.test.sh
+git commit -m "feat: deploy active-time awk to a stable shared path on session start"
+```
+
+---
+
+### Task 3: Tool-heartbeat hooks (Pre/PostToolUse)
 
 **Files:**
 - Create: `hooks/pre-tool-use.sh`
@@ -364,14 +446,14 @@ git commit -m "feat: add Pre/PostToolUse heartbeat hooks (tool-type detail)"
 
 ---
 
-### Task 3: Compute active additively in `session-end.sh`
+### Task 4: Compute active additively in `session-end.sh`
 
 **Files:**
 - Modify: `hooks/session-end.sh:34-59`
 - Create: `tests/session-end.test.sh`
 
 **Interfaces:**
-- Consumes: `hooks/lib/active-time.awk` (Task 1), the session's `events.log`, `SESSION_IDLE_THRESHOLD_SECONDS` (grace, default 120).
+- Consumes: `hooks/lib/active-time.awk` (Task 1) via the hook's sibling `lib/` directory, the session's `events.log`, `SESSION_IDLE_THRESHOLD_SECONDS` (grace, default 120).
 - Produces: a `history.jsonl` line whose `active_seconds` is the additive value and `idle_seconds = duration_seconds - active_seconds`.
 
 - [ ] **Step 1: Write the failing test**
@@ -404,7 +486,7 @@ HIST="$TMP/.claude/session-env/history.jsonl"
 line=$(tail -n1 "$HIST")
 # active = 60s work + 120s grace (parked gap >> grace) = 180
 assert_eq "additive active_seconds" "180" "$(echo "$line" | jq -r '.active_seconds')"
-# idle = duration - active; duration is ~600 so idle is ~420 and consistent
+# idle = duration - active; consistency check
 dur=$(echo "$line" | jq -r '.duration_seconds')
 act=$(echo "$line" | jq -r '.active_seconds')
 idl=$(echo "$line" | jq -r '.idle_seconds')
@@ -424,9 +506,9 @@ In `hooks/session-end.sh`, replace the block currently at lines 34–59 (from `I
 
 ```bash
   # Compute active (working) time additively from events.log via the shared awk
-  # library: each prompt→stop bracket is fully active, plus up to `grace` seconds
-  # of reading after each Stop. Falls back to wall-clock when no events exist
-  # (e.g. session predates this version).
+  # library (the hook's sibling lib/active-time.awk): each prompt→stop bracket is
+  # fully active, plus up to `grace` seconds of reading after each Stop. Falls back
+  # to wall-clock when no events exist (e.g. session predates this version).
   GRACE="${SESSION_IDLE_THRESHOLD_SECONDS:-120}"
   EVENTS_FILE="$SESSION_DIR/events.log"
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -451,7 +533,7 @@ Expected: PASS — `2 run, 0 failed`.
 - [ ] **Step 5: Run the full suite (no regressions)**
 
 Run: `bash tests/run.sh`
-Expected: PASS — active-time (9), hooks (5), session-end (2), all `0 failed`.
+Expected: PASS — active-time (9), session-start (3), hooks (5), session-end (2), all `0 failed`.
 
 - [ ] **Step 6: Commit**
 
@@ -462,15 +544,15 @@ git commit -m "feat: compute active time additively at session end"
 
 ---
 
-### Task 4: Statusline emits active, not wall-clock
+### Task 5: Statusline emits active, not wall-clock
 
 **Files:**
 - Modify: `statusline-snippet.sh`
 - Create: `tests/statusline.test.sh`
 
 **Interfaces:**
-- Consumes: `$input` (statusline JSON with `.session_id`), the session's `events.log`, `SESSION_IDLE_THRESHOLD_SECONDS` (grace, default 120).
-- Produces: `$session_time` (e.g. `3m`, `2h15m`) reflecting active time; falls back to wall-clock only when `events.log` is absent.
+- Consumes: `$input` (statusline JSON with `.session_id`), the session's `events.log`, the deployed awk at `$HOME/.claude/session-env/active-time.awk`, `SESSION_IDLE_THRESHOLD_SECONDS` (grace, default 120).
+- Produces: `$session_time` (e.g. `3m`, `2h15m`) reflecting active time; falls back to wall-clock when `events.log` or the deployed awk is absent.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -487,8 +569,11 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP"
 SID="sl-session-1"
-SDIR="$TMP/.claude/session-env/$SID"
+ENVDIR="$TMP/.claude/session-env"
+SDIR="$ENVDIR/$SID"
 mkdir -p "$SDIR"
+# Simulate the deploy that session-start.sh performs
+cp "$ROOT/hooks/lib/active-time.awk" "$ENVDIR/active-time.awk"
 
 now=$(date +%s)
 start=$((now - 600))             # wall-clock would be 10m
@@ -525,17 +610,10 @@ if [ -n "$sf" ] && [ -f "$sf" ]; then
   now=$(date +%s)
   grace="${SESSION_IDLE_THRESHOLD_SECONDS:-120}"
   events="$(dirname "$sf")/events.log"
-  if [ -f "$events" ]; then
-    # Active (working) time: prompt→stop brackets plus up to `grace` reading tail.
-    # Mirrors hooks/lib/active-time.awk (inlined because this snippet is copied
-    # into the user's statusline, away from the plugin directory).
-    secs=$(awk -v grace="$grace" -v t_end="$now" '
-      BEGIN { open=-1; last=-1; a=0 }
-      { k=$1; ts=$2+0 }
-      k=="P"||k=="T"||k=="D" { if(last>=0){g=ts-last; if(g<0)g=0; a+=(g<grace?g:grace); last=-1} if(open<0)open=ts; next }
-      k=="S" { if(open>=0){d=ts-open; if(d>0)a+=d; open=-1} last=ts; next }
-      END { if(open>=0){d=t_end-open; if(d>0)a+=d} else if(last>=0){g=t_end-last; if(g<0)g=0; a+=(g<grace?g:grace)} if(a<0)a=0; printf "%d", a }
-    ' "$events")
+  awklib="$HOME/.claude/session-env/active-time.awk"
+  if [ -f "$events" ] && [ -f "$awklib" ]; then
+    # Active (working) time via the shared awk deployed by session-start.sh.
+    secs=$(awk -v grace="$grace" -v t_end="$now" -f "$awklib" "$events")
   else
     secs=$((now - start))   # legacy fallback: wall-clock
   fi
@@ -550,7 +628,7 @@ if [ -n "$sf" ] && [ -f "$sf" ]; then
 fi
 ```
 
-Also update the header comment block at the top of the file: change the description line from deriving elapsed time to "Derives **active** (working) time from the session's events.log; falls back to wall-clock when no events exist."
+Also update the header comment block at the top of the file: change the line describing what it derives to "Derives **active** (working) time from the session's events.log using the awk deployed at \$HOME/.claude/session-env/active-time.awk; falls back to wall-clock when either is missing."
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -566,12 +644,15 @@ git commit -m "feat: statusline reports active time with wall-clock fallback"
 
 ---
 
-### Task 5: Update `session-status` skill (active as headline)
+### Task 6: Update `session-status` skill (active as headline)
 
 Documentation/skill change. The deliverable is verified by running the new snippet against a fixture.
 
 **Files:**
 - Modify: `skills/session-status/SKILL.md`
+
+**Interfaces:**
+- Consumes: the deployed awk at `$HOME/.claude/session-env/active-time.awk`, `$CLAUDE_SESSION_FILE`, the session's `events.log`.
 
 - [ ] **Step 1: Replace the Mechanism paragraph**
 
@@ -580,12 +661,12 @@ In `skills/session-status/SKILL.md`, replace the second Mechanism paragraph (the
 ```markdown
 `UserPromptSubmit`/`Stop` and `PreToolUse`/`PostToolUse` hooks append events to
 `events.log`: `P <ts>` (prompt), `T <ts> <tool>` / `D <ts> <tool>` (tool
-start/done), `S <ts>` (stop). **Active (working) time** is computed additively:
-each `prompt → stop` bracket counts in full, plus up to `grace` seconds of
-reading after each `Stop` (`SESSION_IDLE_THRESHOLD_SECONDS`, default 120). A
-session parked while you work elsewhere stops accruing after the grace, so the
-number reflects real attention rather than wall-clock. Wall-clock elapsed is
-reported as secondary context.
+start/done), `S <ts>` (stop). **Active (working) time** is computed additively by
+the shared awk that `SessionStart` deploys to `$HOME/.claude/session-env/active-time.awk`:
+each `prompt → stop` bracket counts in full, plus up to `grace` seconds of reading
+after each `Stop` (`SESSION_IDLE_THRESHOLD_SECONDS`, default 120). A session parked
+while you work elsewhere stops accruing after the grace, so the number reflects real
+attention rather than wall-clock. Wall-clock elapsed is reported as secondary context.
 ```
 
 - [ ] **Step 2: Replace the Usage snippet**
@@ -599,16 +680,11 @@ if [ -n "$start" ]; then
   elapsed=$((now - start))                       # wall-clock (secondary)
   grace="${SESSION_IDLE_THRESHOLD_SECONDS:-120}"
   EVENTS="$(dirname "$CLAUDE_SESSION_FILE")/events.log"
+  AWKLIB="$HOME/.claude/session-env/active-time.awk"
 
-  active="$elapsed"                              # fallback when no events recorded
-  if [ -f "$EVENTS" ]; then
-    active=$(awk -v grace="$grace" -v t_end="$now" '
-      BEGIN { open=-1; last=-1; a=0 }
-      { k=$1; ts=$2+0 }
-      k=="P"||k=="T"||k=="D" { if(last>=0){g=ts-last; if(g<0)g=0; a+=(g<grace?g:grace); last=-1} if(open<0)open=ts; next }
-      k=="S" { if(open>=0){d=ts-open; if(d>0)a+=d; open=-1} last=ts; next }
-      END { if(open>=0){d=t_end-open; if(d>0)a+=d} else if(last>=0){g=t_end-last; if(g<0)g=0; a+=(g<grace?g:grace)} if(a<0)a=0; printf "%d", a }
-    ' "$EVENTS")
+  active="$elapsed"                              # fallback when awk/events absent
+  if [ -f "$EVENTS" ] && [ -f "$AWKLIB" ]; then
+    active=$(awk -v grace="$grace" -v t_end="$now" -f "$AWKLIB" "$EVENTS")
     case "$active" in ''|*[!0-9]*) active="$elapsed" ;; esac
   fi
   [ "$active" -gt "$elapsed" ] && active="$elapsed"
@@ -641,7 +717,8 @@ The reading grace after each Stop is configurable via `SESSION_IDLE_THRESHOLD_SE
 Run:
 
 ```bash
-TMP=$(mktemp -d); SID=ss-1; SDIR="$TMP/.claude/session-env/$SID"; mkdir -p "$SDIR"
+TMP=$(mktemp -d); export HOME="$TMP"; SID=ss-1; ENVDIR="$TMP/.claude/session-env"; SDIR="$ENVDIR/$SID"; mkdir -p "$SDIR"
+cp hooks/lib/active-time.awk "$ENVDIR/active-time.awk"
 now=$(date +%s); start=$((now-600))
 echo "$start" > "$SDIR/session-tracker"
 printf 'P %s\nS %s\n' "$start" "$((start+60))" > "$SDIR/events.log"
@@ -661,7 +738,7 @@ git commit -m "docs: make active time the headline in session-status skill"
 
 ---
 
-### Task 6: Render active + forensic timeline in `session-history` skill
+### Task 7: Render active + forensic timeline in `session-history` skill
 
 **Files:**
 - Modify: `skills/session-history/SKILL.md`
@@ -686,8 +763,8 @@ When the user wants the "filme" of a specific past session, read its
 `events.log` (it persists at `~/.claude/session-env/<session_id>/events.log`
 after the session ends; `history.jsonl` carries the `session_id`). Pair `T`/`D`
 heartbeats per tool name to show time spent per tool inside each working
-interval. awk does the counting/pairing (one-true-awk safe); the shell formats
-epoch → `HH:MM`:
+interval. awk does the counting/pairing (one-true-awk safe — arrays only, no
+`strftime`); the shell formats epoch → `HH:MM`:
 
 ```bash
 SID="$1"                                   # session_id from history.jsonl
@@ -732,7 +809,8 @@ Renders e.g.:
 ```
 
 Only tool *types* and durations are shown — no file paths or command contents
-(detail level B).
+(detail level B). This timeline awk is unique to `session-history` (it pairs
+`T`/`D`); it is unrelated to the active-time library.
 ````
 
 - [ ] **Step 3: Verify the timeline snippet against a fixture**
@@ -746,7 +824,7 @@ printf 'P 1000\nT 1005 Edit\nD 1095 Edit\nT 1100 Read\nD 1112 Read\nS 1200\n' > 
 rm -rf "$TMP"
 ```
 
-Expected: a `09/..:..  prompt` line, a tool summary containing `Edit 1m30s` and `Read 0m12s`, and a `stop (trabalho 3m20s)` line. (Clock times depend on local TZ; durations are fixed: Edit 90s, Read 12s, work 200s.)
+Expected: a `..:..  prompt` line, a tool summary containing `Edit 1m30s` and `Read 0m12s`, and a `stop (trabalho 3m20s)` line. (Clock times depend on local TZ; durations are fixed: Edit 90s, Read 12s, work 200s.)
 
 - [ ] **Step 4: Commit**
 
@@ -757,7 +835,7 @@ git commit -m "docs: report active time and add forensic timeline to session-his
 
 ---
 
-### Task 7: Docs — CHANGELOG, README, reset-session check
+### Task 8: Docs — CHANGELOG, README, reset-session check
 
 **Files:**
 - Modify: `CHANGELOG.md`
@@ -781,8 +859,9 @@ Insert a new section directly under the header block (above `## [2.5.0] - 2026-0
   `D <ts> <tool>`, tool type only) to `events.log`.
 - Forensic per-session timeline in the `session-history` skill, showing time
   spent per tool type inside each working interval.
-- Shared `hooks/lib/active-time.awk` library and a plain-bash test suite under
-  `tests/`.
+- Shared `hooks/lib/active-time.awk` library (deployed to
+  `~/.claude/session-env/active-time.awk` on session start so the statusline and
+  skills share one implementation) and a plain-bash test suite under `tests/`.
 
 ### Changed
 - **Active time is now computed additively** (prompt→stop brackets plus a
@@ -820,7 +899,7 @@ Active time credits each prompt→stop bracket fully, plus up to `SESSION_IDLE_T
 - Replace the mechanism bullet (~168) with:
 
 ```markdown
-6. `UserPromptSubmit`/`Stop` and `PreToolUse`/`PostToolUse` hooks append `P`/`S` and `T`/`D <tool>` lines to `events.log`; active time is computed additively (prompt→stop brackets plus a bounded reading grace) by `hooks/lib/active-time.awk`
+6. `UserPromptSubmit`/`Stop` and `PreToolUse`/`PostToolUse` hooks append `P`/`S` and `T`/`D <tool>` lines to `events.log`; active time is computed additively (prompt→stop brackets plus a bounded reading grace) by `hooks/lib/active-time.awk`, which `SessionStart` deploys to `~/.claude/session-env/active-time.awk` for the statusline and skills to share
 ```
 
 - [ ] **Step 4: Run the full suite once more**
@@ -839,7 +918,7 @@ git commit -m "docs: document additive active time and tool heartbeats"
 
 ## Self-Review notes
 
-- **Spec coverage:** active model → Task 1; `T`/`D` hooks + format → Task 2; session-end additive → Task 3; statusline canonical → Task 4; session-status canonical → Task 5; session-history render + forensic timeline → Task 6; reset-session (no change) + CHANGELOG/README → Task 7. Backward-compat (legacy `events.log`, no-events fallback) covered in Tasks 3/4/5. All spec sections map to a task.
+- **Spec coverage:** active model → Task 1; shared-lib deploy → Task 2; `T`/`D` hooks + format → Task 3; session-end additive → Task 4; statusline canonical → Task 5; session-status canonical → Task 6; session-history render + forensic timeline → Task 7; reset-session (no change) + CHANGELOG/README → Task 8. Backward-compat (legacy `events.log`, missing awk/events fallback) covered in Tasks 4/5/6. All spec sections map to a task.
+- **Single source (no duplicated logic):** the additive awk exists only in `hooks/lib/active-time.awk`. `session-end.sh` uses the sibling file; statusline and skills use the deployed copy at `$HOME/.claude/session-env/active-time.awk` (refreshed by `session-start.sh`). The only "copy" is a runtime file deploy, not duplicated source. The `session-history` timeline awk is a separate, single-use program (T/D pairing) and is not a duplicate of the active-time lib.
 - **Version bump:** intentionally NOT done here — left to the existing `/release` flow, which consumes the `[Unreleased]` CHANGELOG section.
-- **DRY caveat:** the awk appears in the lib (Task 1), the statusline (Task 4), and the two skills (Tasks 5–6). The lib is canonical; the others are inlined because they are copied/executed outside the plugin directory. They must stay byte-equivalent in logic — if the algorithm changes, update all four.
 - **Grace semantics:** `SESSION_IDLE_THRESHOLD_SECONDS` is reused (not renamed) to avoid breaking existing user config; only its meaning and default change. Documented in CHANGELOG.

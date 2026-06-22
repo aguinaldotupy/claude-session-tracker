@@ -116,19 +116,38 @@ cross-session arbitration expensive does not apply here.
 - **New** `hooks/post-tool-use.sh` — same, appends `D <ts> <Tool>`.
 - `hooks/hooks.json` — register both on `PreToolUse` / `PostToolUse` (matcher `""`, timeout 5).
 - `hooks/session-end.sh` — replace the subtractive idle awk with the additive pass above to
-  compute `active_seconds`. `duration_seconds` (wall-clock) and `idle_seconds` are still written
-  (`idle_seconds = duration_seconds - active_seconds`), so the JSONL schema is unchanged.
+  compute `active_seconds`. It invokes the canonical awk library directly (its sibling
+  `hooks/lib/active-time.awk`). `duration_seconds` (wall-clock) and `idle_seconds` are still
+  written (`idle_seconds = duration_seconds - active_seconds`), so the JSONL schema is unchanged.
+- `hooks/session-start.sh` — **deploys** the canonical awk to a stable, plugin-independent path
+  (`$HOME/.claude/session-env/active-time.awk`) on every start, so consumers that run outside the
+  plugin directory (statusline, skills) share one implementation (see below).
 
 The `<Tool>` token is taken from the hook's `tool_name` field verbatim (a single bareword like
 `Edit`, `Bash`, `Read`). No arguments, paths, or command strings are logged.
+
+## Single source for the active computation
+
+The additive algorithm lives in exactly one file, `hooks/lib/active-time.awk`. Consumers reach it
+two ways depending on where they run:
+
+- **Inside the plugin** (`session-end.sh`) — references its sibling `lib/active-time.awk` directly.
+- **Outside the plugin** (`statusline-snippet.sh` copied into `~/.claude/`, and the skill snippets
+  run in the user's shell) — reference the **deployed copy** at
+  `$HOME/.claude/session-env/active-time.awk`, which `session-start.sh` refreshes each start. If
+  the deployed copy is absent (e.g. statusline configured before this version ran), they fall back
+  to wall-clock.
+
+No logic block is duplicated: there is one `.awk` source; the only copy is a runtime deploy of
+that file to a known path.
 
 ## Canonical number propagation
 
 The headline number becomes **active** everywhere; wall-clock is demoted to metadata.
 
-- **`statusline-snippet.sh`** — compute `active` from `events.log` via the additive pass and emit
-  that as `session_time`, instead of `now - start`. Falls back to wall-clock only if `events.log`
-  is absent (legacy).
+- **`statusline-snippet.sh`** — compute `active` from `events.log` by invoking the deployed awk
+  (`$HOME/.claude/session-env/active-time.awk`) and emit that as `session_time`, instead of
+  `now - start`. Falls back to wall-clock if `events.log` or the deployed awk is absent (legacy).
 - **`skills/session-status`** — `active` is the headline; show wall-clock and idle as context,
   e.g. `Trabalho: 2h15m  ·  sessão aberta há 8h02m (idle 5h47m)`.
 - **`skills/session-history`** — `history.jsonl` already carries `active_seconds`; it becomes the
@@ -182,13 +201,16 @@ confirming the truncation remains (it does).
 
 ## Affected files
 
+- `hooks/lib/active-time.awk` — **new**; the single source for the additive computation.
 - `hooks/hooks.json` — register PreToolUse + PostToolUse.
 - `hooks/pre-tool-use.sh` — **new**.
 - `hooks/post-tool-use.sh` — **new**.
-- `hooks/session-end.sh` — additive `active` computation.
-- `statusline-snippet.sh` — emit active, not wall-clock.
-- `skills/session-status/SKILL.md` — active as headline; additive awk; wall-clock as metadata.
+- `hooks/session-start.sh` — deploy `active-time.awk` to `$HOME/.claude/session-env/`.
+- `hooks/session-end.sh` — additive `active` computation via the sibling awk lib.
+- `statusline-snippet.sh` — emit active (deployed awk), not wall-clock.
+- `skills/session-status/SKILL.md` — active as headline (deployed awk); wall-clock as metadata.
 - `skills/session-history/SKILL.md` — render `active_seconds`; add forensic timeline view.
+- `tests/` — **new**; plain-bash suite for the awk lib and hooks.
 - `CHANGELOG.md` — note canonical-number change and `grace` default 300 → 120.
 - `README.md` — update the time-tracking description.
 
