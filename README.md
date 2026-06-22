@@ -10,7 +10,7 @@ Track Claude Code session duration with automatic timestamps.
 
 - **SessionStart hook** - saves timestamp in plugin directory, exports `CLAUDE_SESSION_FILE` env var
 - **SessionEnd hook** - appends completed sessions to a JSONL history log for worklog reports
-- **Active vs idle time** - `UserPromptSubmit` and `Stop` hooks record turn boundaries; gaps longer than `SESSION_IDLE_THRESHOLD_SECONDS` (default 300s) are counted as idle, so you can see real working time vs the AFK gaps
+- **Active (working) time** - active time is computed additively from `events.log`: each prompt→stop bracket counts in full, plus up to `SESSION_IDLE_THRESHOLD_SECONDS` (default 120s) of reading after each turn. A session left open while you work elsewhere stops accruing, so concurrent sessions on the same project stay honest. `PreToolUse`/`PostToolUse` heartbeats record tool activity for a forensic timeline.
 - **Persistent session files** - session data survives session end so you can track hours later
 - **`/session-tracker:session-status` skill** - check elapsed time, plus today's accumulated total
 - **`/session-tracker:session-history` command + skill** - review past sessions filtered by date or project
@@ -80,10 +80,10 @@ Type `/session-tracker:session-status` or ask naturally:
 Example output:
 
 ```
-Session: 1h 23m (active: 48m, idle: 35m, started at 14:30)
+Trabalho: 48m · sessão aberta há 1h 23m (idle 35m, desde 14:30)
 ```
 
-Idle is the sum of gaps between Claude finishing a turn (`Stop`) and your next prompt that exceeded `SESSION_IDLE_THRESHOLD_SECONDS` (default 300). Tune it by setting the env var, e.g. `export SESSION_IDLE_THRESHOLD_SECONDS=180` for a stricter 3-minute cutoff.
+Active time credits each prompt→stop bracket fully, plus up to `SESSION_IDLE_THRESHOLD_SECONDS` seconds of reading after each turn (default 120). Tune it, e.g. `export SESSION_IDLE_THRESHOLD_SECONDS=60` for a stricter 1-minute reading grace. Wall-clock ("aberta há…") is shown only as context.
 
 ### Reset Timer
 
@@ -165,7 +165,7 @@ tupy@host:project (main*) [Opus 4.6] 45m
 3. `/session-tracker:session-status` and the statusline read the file using `$CLAUDE_SESSION_FILE`
 4. Session files persist after session end - no data is lost when closing Claude Code
 5. Using `/clear` or starting a new session creates a fresh timestamp
-6. `UserPromptSubmit` and `Stop` hooks append `P <ts>` / `S <ts>` lines to `events.log` in the same directory; idle time is computed by summing `(next_prompt − stop)` gaps that exceed `SESSION_IDLE_THRESHOLD_SECONDS`
+6. `UserPromptSubmit`/`Stop` and `PreToolUse`/`PostToolUse` hooks append `P`/`S` and `T`/`D <tool>` lines to `events.log`; active time is computed additively (prompt→stop brackets plus a bounded reading grace) by `hooks/lib/active-time.awk`, which `SessionStart` deploys to `~/.claude/session-env/active-time.awk` for the statusline and skills to share
 
 ## Managing the Plugin
 
