@@ -2,7 +2,7 @@
 # Session elapsed time snippet for status line scripts.
 # Copy this block into your ~/.claude/statusline-command.sh
 #
-# Derives session file path from session_id in the statusline JSON input.
+# Derives **active** (working) time from the session's events.log using the awk deployed at $HOME/.claude/session-env/active-time.awk; falls back to wall-clock when either is missing.
 # Falls back to $PPID for legacy setups.
 #
 # Expects: $input variable with the statusline JSON (from stdin)
@@ -20,9 +20,18 @@ fi
 if [ -n "$sf" ] && [ -f "$sf" ]; then
   start=$(cat "$sf")
   now=$(date +%s)
-  elapsed=$((now - start))
-  hours=$((elapsed / 3600))
-  minutes=$(((elapsed % 3600) / 60))
+  grace="${SESSION_IDLE_THRESHOLD_SECONDS:-120}"
+  events="$(dirname "$sf")/events.log"
+  awklib="$HOME/.claude/session-env/active-time.awk"
+  if [ -f "$events" ] && [ -f "$awklib" ]; then
+    # Active (working) time via the shared awk deployed by session-start.sh.
+    secs=$(awk -v grace="$grace" -v t_end="$now" -f "$awklib" "$events")
+  else
+    secs=$((now - start))   # legacy fallback: wall-clock
+  fi
+  case "$secs" in ''|*[!0-9]*) secs=$((now - start)) ;; esac
+  hours=$((secs / 3600))
+  minutes=$(((secs % 3600) / 60))
   if [ $hours -gt 0 ]; then
     session_time="${hours}h${minutes}m"
   else

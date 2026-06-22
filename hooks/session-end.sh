@@ -28,35 +28,24 @@ set -uo pipefail
   DURATION=$((END_TS - START_TS))
   [ "$DURATION" -lt 0 ] && DURATION=0
 
-  # Compute idle/active from events.log. Idle = sum of (next-prompt - stop) gaps
-  # that exceed the threshold. Active = duration - idle. Defaults to no idle if
-  # events file is missing (e.g. session installed before this version).
-  IDLE_THRESHOLD="${SESSION_IDLE_THRESHOLD_SECONDS:-300}"
+  # Compute active (working) time additively from events.log via the shared awk
+  # library (the hook's sibling lib/active-time.awk): each prompt→stop bracket is
+  # fully active, plus up to `grace` seconds of reading after each Stop. Falls back
+  # to wall-clock when no events exist (e.g. session predates this version).
+  GRACE="${SESSION_IDLE_THRESHOLD_SECONDS:-120}"
   EVENTS_FILE="$SESSION_DIR/events.log"
-  IDLE_SECONDS=0
-  if [ -f "$EVENTS_FILE" ]; then
-    IDLE_SECONDS=$(awk -v th="$IDLE_THRESHOLD" -v end="$END_TS" '
-      { kind=$1; ts=$2+0 }
-      kind=="S" { last_stop=ts; have_stop=1; next }
-      kind=="P" && have_stop {
-        gap = ts - last_stop
-        if (gap > th) idle += gap
-        have_stop=0
-      }
-      END {
-        if (have_stop) {
-          gap = end - last_stop
-          if (gap > th) idle += gap
-        }
-        printf "%d", idle+0
-      }
-    ' "$EVENTS_FILE" 2>/dev/null || echo 0)
-    case "$IDLE_SECONDS" in
-      ''|*[!0-9]*) IDLE_SECONDS=0 ;;
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  AWK_LIB="$SCRIPT_DIR/lib/active-time.awk"
+  ACTIVE_SECONDS="$DURATION"
+  if [ -f "$EVENTS_FILE" ] && [ -f "$AWK_LIB" ]; then
+    COMPUTED=$(awk -v grace="$GRACE" -v t_end="$END_TS" -f "$AWK_LIB" "$EVENTS_FILE" 2>/dev/null || echo "")
+    case "$COMPUTED" in
+      ''|*[!0-9]*) : ;;
+      *) ACTIVE_SECONDS="$COMPUTED" ;;
     esac
   fi
-  [ "$IDLE_SECONDS" -gt "$DURATION" ] && IDLE_SECONDS="$DURATION"
-  ACTIVE_SECONDS=$((DURATION - IDLE_SECONDS))
+  [ "$ACTIVE_SECONDS" -gt "$DURATION" ] && ACTIVE_SECONDS="$DURATION"
+  IDLE_SECONDS=$((DURATION - ACTIVE_SECONDS))
 
   # Resolve issue key: explicit tag file wins, else branch heuristic, else empty.
   ISSUE_KEY=""

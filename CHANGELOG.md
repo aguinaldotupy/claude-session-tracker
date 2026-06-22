@@ -5,6 +5,31 @@ All notable changes to this plugin are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `PreToolUse`/`PostToolUse` hooks append tool heartbeats (`T <ts> <tool>` /
+  `D <ts> <tool>`, tool type only) to `events.log`.
+- Forensic per-session timeline in the `session-history` skill, showing time
+  spent per tool type inside each working interval.
+- Shared `hooks/lib/active-time.awk` library (deployed to
+  `~/.claude/session-env/active-time.awk` on session start so the statusline and
+  skills share one implementation) and a plain-bash test suite under `tests/`.
+
+### Changed
+- **Active time is now computed additively** (prompt→stop brackets plus a
+  bounded reading grace) instead of subtracting idle gaps from wall-clock. A
+  session parked while you work in another session on the same project no longer
+  inflates — it stops accruing after the grace. Active is now the headline
+  number in the statusline, `session-status`, and `session-history`; wall-clock
+  is shown as secondary context.
+- `SESSION_IDLE_THRESHOLD_SECONDS` is reinterpreted as the reading-grace cap and
+  its default changes from 300s to **120s**.
+- Historical `history.jsonl` entries written before this release keep their old
+  subtractively-computed `active_seconds`/`idle_seconds` values — they are not
+  retroactively recomputed, so `session-history` totals spanning the upgrade mix
+  the two models.
+
 ## [2.5.0] - 2026-05-13
 
 ### Added
