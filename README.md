@@ -83,7 +83,7 @@ Example output:
 Trabalho: 48m · sessão aberta há 1h 23m (idle 35m, desde 14:30)
 ```
 
-Active time credits each prompt→stop bracket fully, plus up to `SESSION_IDLE_THRESHOLD_SECONDS` seconds of reading after each turn (default 120). Tune it, e.g. `export SESSION_IDLE_THRESHOLD_SECONDS=60` for a stricter 1-minute reading grace. Wall-clock ("aberta há…") is shown only as context.
+Active time credits each prompt→stop bracket fully, plus up to `SESSION_IDLE_THRESHOLD_SECONDS` seconds of reading after each turn (default 120). Tune it, e.g. `export SESSION_IDLE_THRESHOLD_SECONDS=60` for a stricter 1-minute reading grace. Wall-clock (shown as "aberta há…", i.e. "open for") is reported only as context.
 
 ### Reset Timer
 
@@ -157,6 +157,8 @@ Example output:
 ```
 tupy@host:project (main*) [Opus 4.6] 45m
 ```
+
+The time shown is **active** (working) time — the same number `session-status` headlines, not wall-clock.
 
 ## How It Works
 

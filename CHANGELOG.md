@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is shown as secondary context.
 - `SESSION_IDLE_THRESHOLD_SECONDS` is reinterpreted as the reading-grace cap and
   its default changes from 300s to **120s**.
+- Historical `history.jsonl` entries written before this release keep their old
+  subtractively-computed `active_seconds`/`idle_seconds` values — they are not
+  retroactively recomputed, so `session-history` totals spanning the upgrade mix
+  the two models.
 
 ## [2.5.0] - 2026-05-13
 
