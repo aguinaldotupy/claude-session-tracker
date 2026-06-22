@@ -12,7 +12,7 @@
 #   t_end  terminal epoch — `now` for a live session, `end_ts` at SessionEnd
 #
 # Prints active seconds (integer) to stdout.
-BEGIN { open = -1; last_stop = -1; active = 0 }
+BEGIN { open = -1; last_stop = -1; active = 0; if (grace == "" || grace + 0 <= 0) grace = 120 }
 { kind = $1; ts = $2 + 0 }
 kind == "P" || kind == "T" || kind == "D" {
   if (last_stop >= 0) {

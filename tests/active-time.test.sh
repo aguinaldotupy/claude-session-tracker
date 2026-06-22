@@ -33,4 +33,7 @@ assert_eq "tools inside bracket" "60" "$(printf 'P 1000\nT 1005 Edit\nD 1040 Edi
 # Out-of-order / negative gaps are guarded: 60 + 0 + 20
 assert_eq "negative gap guarded" "80" "$(printf 'P 1000\nS 1060\nP 1050\nS 1070\n' | active 120 1070)"
 
+# grace self-defaults to 120 when not provided
+assert_eq "grace self-defaults to 120" "180" "$(printf 'P 1000\nS 1060\n' | awk -v t_end=5000 -f "$AWK")"
+
 finish

@@ -23,7 +23,9 @@ assert_eq "post-tool-use kind is D" "D" "$(echo "$line" | awk '{print $1}')"
 assert_eq "post-tool-use logs tool type" "Bash" "$(echo "$line" | awk '{print $3}')"
 
 # Missing session_id: no crash, no file
-echo '{}' | bash "$ROOT/hooks/pre-tool-use.sh"; rc=$?
+EMPTY_HOME="$TMP/empty"; mkdir -p "$EMPTY_HOME"
+echo '{}' | HOME="$EMPTY_HOME" bash "$ROOT/hooks/pre-tool-use.sh"; rc=$?
 assert_eq "missing session_id exits clean" "0" "$rc"
+assert_eq "missing session_id writes nothing" "no" "$([ -d "$EMPTY_HOME/.claude/session-env" ] && echo yes || echo no)"
 
 finish

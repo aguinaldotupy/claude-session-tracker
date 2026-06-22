@@ -29,7 +29,7 @@ if [ -n "$sf" ] && [ -f "$sf" ]; then
   else
     secs=$((now - start))   # legacy fallback: wall-clock
   fi
-  case "$secs" in ''|*[!0-9]*) secs=0 ;; esac
+  case "$secs" in ''|*[!0-9]*) secs=$((now - start)) ;; esac
   hours=$((secs / 3600))
   minutes=$(((secs % 3600) / 60))
   if [ $hours -gt 0 ]; then
