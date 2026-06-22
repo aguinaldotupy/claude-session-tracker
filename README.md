@@ -8,7 +8,7 @@ Track Claude Code session duration with automatic timestamps.
 
 ## Features
 
-- **SessionStart hook** - saves timestamp in plugin directory, exports `CLAUDE_SESSION_FILE` env var
+- **SessionStart hook** - saves a start timestamp under `~/.claude/session-env/<session_id>/` and reports its path as `CLAUDE_SESSION_FILE` in hook output
 - **SessionEnd hook** - appends completed sessions to a JSONL history log for worklog reports
 - **Active (working) time** - active time is computed additively from `events.log`: each prompt→stop bracket counts in full, plus up to `SESSION_IDLE_THRESHOLD_SECONDS` (default 120s) of reading after each turn. A session left open while you work elsewhere stops accruing, so concurrent sessions on the same project stay honest. `PreToolUse`/`PostToolUse` heartbeats record tool activity for a forensic timeline.
 - **Persistent session files** - session data survives session end so you can track hours later
@@ -162,9 +162,9 @@ The time shown is **active** (working) time — the same number `session-status`
 
 ## How It Works
 
-1. On session start, a timestamp is saved to the plugin directory as `session-tracker-$SESSION_ID` and the full path is exported as `CLAUDE_SESSION_FILE` via `CLAUDE_ENV_FILE`
+1. On session start, the `SessionStart` hook reads `session_id` from its stdin JSON and writes the start timestamp to `~/.claude/session-env/<session_id>/session-tracker`, then prints that path back as `CLAUDE_SESSION_FILE` in its hook output (no `CLAUDE_ENV_FILE` indirection)
 2. The session ID is stable across context compaction, so the timestamp survives compact and resume without extra hooks
-3. `/session-tracker:session-status` and the statusline read the file using `$CLAUDE_SESSION_FILE`
+3. `/session-tracker:session-status` and the statusline locate the file by `session_id` under `~/.claude/session-env/<session_id>/` and read it from that per-session directory
 4. Session files persist after session end - no data is lost when closing Claude Code
 5. Using `/clear` or starting a new session creates a fresh timestamp
 6. `UserPromptSubmit`/`Stop` and `PreToolUse`/`PostToolUse` hooks append `P`/`S` and `T`/`D <tool>` lines to `events.log`; active time is computed additively (prompt→stop brackets plus a bounded reading grace) by `hooks/lib/active-time.awk`, which `SessionStart` deploys to `~/.claude/session-env/active-time.awk` for the statusline and skills to share
