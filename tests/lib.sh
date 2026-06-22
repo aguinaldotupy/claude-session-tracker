@@ -1,4 +1,9 @@
 # Minimal test helpers. Source from *.test.sh files.
+
+# Pin the reading-grace to its default so tests are deterministic regardless of
+# the runner's environment. Tests that need a non-default grace can re-export it.
+unset SESSION_IDLE_THRESHOLD_SECONDS
+
 TESTS_RUN=0
 TESTS_FAILED=0
 
