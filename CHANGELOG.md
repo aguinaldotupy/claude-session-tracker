@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shared `hooks/lib/active-time.awk` library (deployed to
   `~/.claude/session-env/active-time.awk` on session start so the statusline and
   skills share one implementation) and a plain-bash test suite under `tests/`.
+- `PostToolUseFailure`/`StopFailure` hooks append failure heartbeats (`DF <ts>
+  <tool>` / `SF <ts>`) to `events.log`, closing brackets that a failed tool or an
+  API-errored turn would otherwise leave dangling. For active-time they count
+  exactly like `D`/`S`; the distinct marks let the `session-history` forensic
+  timeline flag failed tools (`✗`) and API-error stops.
 
 ### Changed
 - **Active time is now computed additively** (prompt→stop brackets plus a

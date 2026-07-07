@@ -4,7 +4,9 @@
 #   P <ts>          prompt submitted  (engagement begins)
 #   T <ts> <tool>   tool started      (keeps engagement open)
 #   D <ts> <tool>   tool done         (keeps engagement open)
+#   DF <ts> <tool>  tool failed       (keeps engagement open; counts like D)
 #   S <ts>          Claude stopped    (engagement ends; reading tail begins)
+#   SF <ts>         turn failed (API)  (engagement ends; counts like S)
 #
 # Pass with -v:
 #   grace  reading-tail cap in seconds (credited after a Stop before the next
@@ -14,7 +16,7 @@
 # Prints active seconds (integer) to stdout.
 BEGIN { open = -1; last_stop = -1; active = 0; if (grace == "" || grace + 0 <= 0) grace = 120 }
 { kind = $1; ts = $2 + 0 }
-kind == "P" || kind == "T" || kind == "D" {
+kind == "P" || kind == "T" || kind == "D" || kind == "DF" {
   if (last_stop >= 0) {
     gap = ts - last_stop
     if (gap < 0) gap = 0
@@ -24,7 +26,7 @@ kind == "P" || kind == "T" || kind == "D" {
   if (open < 0) open = ts
   next
 }
-kind == "S" {
+kind == "S" || kind == "SF" {
   if (open >= 0) {
     d = ts - open
     if (d > 0) active += d

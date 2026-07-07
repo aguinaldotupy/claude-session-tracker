@@ -22,6 +22,17 @@ line=$(tail -n1 "$EV")
 assert_eq "post-tool-use kind is D" "D" "$(echo "$line" | awk '{print $1}')"
 assert_eq "post-tool-use logs tool type" "Bash" "$(echo "$line" | awk '{print $3}')"
 
+# PostToolUseFailure appends a DF line carrying the tool type
+echo '{"session_id":"'"$SID"'","tool_name":"Bash"}' | bash "$ROOT/hooks/post-tool-use-failure.sh"
+line=$(tail -n1 "$EV")
+assert_eq "post-tool-use-failure kind is DF" "DF" "$(echo "$line" | awk '{print $1}')"
+assert_eq "post-tool-use-failure logs tool type" "Bash" "$(echo "$line" | awk '{print $3}')"
+
+# StopFailure appends an SF line (no tool field)
+echo '{"session_id":"'"$SID"'"}' | bash "$ROOT/hooks/stop-failure.sh"
+line=$(tail -n1 "$EV")
+assert_eq "stop-failure kind is SF" "SF" "$(echo "$line" | awk '{print $1}')"
+
 # Missing session_id: no crash, no file
 EMPTY_HOME="$TMP/empty"; mkdir -p "$EMPTY_HOME"
 echo '{}' | HOME="$EMPTY_HOME" bash "$ROOT/hooks/pre-tool-use.sh"; rc=$?

@@ -36,4 +36,16 @@ assert_eq "negative gap guarded" "80" "$(printf 'P 1000\nS 1060\nP 1050\nS 1070\
 # grace self-defaults to 120 when not provided
 assert_eq "grace self-defaults to 120" "180" "$(printf 'P 1000\nS 1060\n' | awk -v t_end=5000 -f "$AWK")"
 
+# DF (tool failed) holds the bracket open just like D
+assert_eq "DF holds open bracket" "200" "$(printf 'P 1000\nT 1010 Read\nDF 1050 Read\n' | active 120 1200)"
+
+# DF inside a bracket does not change the working total (counts like D)
+assert_eq "DF counts like D" "60" "$(printf 'P 1000\nT 1005 Bash\nDF 1040 Bash\nS 1060\n' | active 120 1060)"
+
+# SF (turn failed on API error) closes the bracket just like S
+assert_eq "SF closes like S" "60" "$(printf 'P 1000\nSF 1060\n' | active 120 1060)"
+
+# SF then parked: only grace credited after the failed stop (60 + 120)
+assert_eq "SF then parked credits grace" "180" "$(printf 'P 1000\nSF 1060\n' | active 120 5000)"
+
 finish
