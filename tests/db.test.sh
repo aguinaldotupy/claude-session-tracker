@@ -33,4 +33,29 @@ assert_eq "root of worktree is main repo" "$repo" "$(st_project_root "$wt")"
 plain="$TMP/plain"; mkdir -p "$plain"
 assert_eq "root of non-git is cwd" "$plain" "$(st_project_root "$plain")"
 
+# --- st_upsert_session ---
+st_db_init
+one() { sqlite3 "$(st_db_path)" "$1"; }
+
+# insert 3 cumulative snapshots of the SAME session (simulating repeated SessionEnd)
+st_upsert_session "sX" "$repo" "$repo" "main" "" 1000 1100 100 40  60  "other" 1101
+st_upsert_session "sX" "$repo" "$repo" "main" "" 1000 1300 300 120 180 "other" 1301
+st_upsert_session "sX" "$repo" "$repo" "main" "" 1000 1600 600 250 350 "other" 1601
+
+assert_eq "upsert keeps one row" "1" "$(one "SELECT COUNT(*) FROM sessions WHERE session_id='sX';")"
+assert_eq "upsert keeps latest active" "250" "$(one "SELECT active_seconds FROM sessions WHERE session_id='sX';")"
+
+# older snapshot must NOT overwrite the newer one (max-end_ts guard)
+st_upsert_session "sX" "$repo" "$repo" "main" "" 1000 1200 200 90 110 "other" 1700
+assert_eq "older snapshot ignored" "250" "$(one "SELECT active_seconds FROM sessions WHERE session_id='sX';")"
+
+# project row deduped, name is basename
+assert_eq "one project row" "1" "$(one "SELECT COUNT(*) FROM projects;")"
+assert_eq "project name basename" "repo" "$(one "SELECT name FROM projects;")"
+
+# injection safety: a single quote in the path stores verbatim, no SQL error
+st_upsert_session "sQ" "$TMP/o'brien" "$TMP/o'brien" "" "" 5 6 1 1 0 "other" 7; rc=$?
+assert_eq "quote path no error" "0" "$rc"
+assert_eq "quote path stored" "$TMP/o'brien" "$(one "SELECT project_dir FROM sessions WHERE session_id='sQ';")"
+
 finish

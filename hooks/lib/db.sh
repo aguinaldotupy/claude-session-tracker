@@ -34,3 +34,35 @@ st_project_root() {
     *)  (cd "$cwd/$(dirname "$common")" 2>/dev/null && pwd) || printf '%s' "$cwd" ;;
   esac
 }
+
+# st_upsert_session sid root dir branch issue start end dur active idle reason now
+# Upserts projects (by project_root) and sessions (by session_id, max-end_ts wins).
+st_upsert_session() {
+  st_has_sqlite || return 1
+  local sid="$1" root="$2" dir="$3" branch="$4" issue="$5"
+  local start="$(( $6 + 0 ))" end="$(( $7 + 0 ))" dur="$(( $8 + 0 ))"
+  local active="$(( $9 + 0 ))" idle="$(( ${10} + 0 ))" reason="${11}" now="$(( ${12} + 0 ))"
+  local name; name="$(basename "$root")"
+  local e_sid e_root e_dir e_branch e_issue e_name e_reason
+  e_sid="$(st_sql_escape "$sid")";     e_root="$(st_sql_escape "$root")"
+  e_dir="$(st_sql_escape "$dir")";     e_branch="$(st_sql_escape "$branch")"
+  e_issue="$(st_sql_escape "$issue")"; e_name="$(st_sql_escape "$name")"
+  e_reason="$(st_sql_escape "$reason")"
+  sqlite3 "$(st_db_path)" <<SQL 2>/dev/null
+BEGIN;
+INSERT INTO projects(project_root,name,first_seen_ts,last_seen_ts)
+  VALUES('$e_root','$e_name',$now,$now)
+  ON CONFLICT(project_root) DO UPDATE SET last_seen_ts=$now;
+INSERT INTO sessions(session_id,project_id,project_dir,branch,issue_key,
+                     start_ts,end_ts,duration_seconds,active_seconds,idle_seconds,reason,updated_at)
+  VALUES('$e_sid',(SELECT id FROM projects WHERE project_root='$e_root'),'$e_dir','$e_branch','$e_issue',
+         $start,$end,$dur,$active,$idle,'$e_reason',$now)
+  ON CONFLICT(session_id) DO UPDATE SET
+    end_ts=excluded.end_ts, duration_seconds=excluded.duration_seconds,
+    active_seconds=excluded.active_seconds, idle_seconds=excluded.idle_seconds,
+    reason=excluded.reason, branch=excluded.branch, issue_key=excluded.issue_key,
+    project_id=excluded.project_id, project_dir=excluded.project_dir, updated_at=excluded.updated_at
+  WHERE excluded.end_ts >= sessions.end_ts;
+COMMIT;
+SQL
+}
