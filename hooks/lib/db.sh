@@ -18,5 +18,5 @@ st_db_init() {
   schema="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/schema.sql"
   [ -f "$schema" ] || return 1
   mkdir -p "$dir"
-  sqlite3 "$db" < "$schema" 2>/dev/null
+  sqlite3 "$db" < "$schema" >/dev/null 2>&1
 }
