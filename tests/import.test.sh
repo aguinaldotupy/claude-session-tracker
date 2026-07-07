@@ -39,12 +39,27 @@ assert_eq "still two sessions" "2" "$(one "SELECT COUNT(*) FROM sessions;")"
 # fix #1: legacy branch is real SQL NULL, not empty string
 assert_eq "legacy branch is NULL" "1" "$(one "SELECT branch IS NULL FROM sessions WHERE session_id='dup';")"
 
-# fix #2: a malformed history.jsonl is preserved (not renamed) and returns non-zero
+# fix #2 (superseded by resilient import below): a malformed history.jsonl no
+# longer aborts the whole migration — the valid row is now salvaged and the
+# file renamed, instead of being preserved untouched with a non-zero return.
 SE2="$HOME/.claude/session-env"
 printf '{"session_id":"ok","project_dir":"/p","start_ts":1,"end_ts":2,"active_seconds":5}\nNOT JSON\n' > "$SE2/history.jsonl"
 st_import_history; rc=$?
-assert_eq "malformed history returns non-zero" "1" "$rc"
-assert_eq "malformed history preserved" "yes" "$([ -f "$SE2/history.jsonl" ] && echo yes || echo no)"
-assert_eq "malformed history not imported" "0" "$(one "SELECT COUNT(*) FROM sessions WHERE session_id='ok';")"
+assert_eq "malformed history salvage returns zero" "0" "$rc"
+assert_eq "malformed history renamed after salvage" "no" "$([ -f "$SE2/history.jsonl" ] && echo yes || echo no)"
+assert_eq "malformed history: valid row still imported" "1" "$(one "SELECT COUNT(*) FROM sessions WHERE session_id='ok';")"
+
+# a single malformed line no longer aborts the whole migration — valid rows import, bad line skipped
+SE3="$HOME/.claude/session-env"
+printf '%s\n' \
+  '{"session_id":"g1","project_dir":"/p/a","active_seconds":30,"duration_seconds":30,"idle_seconds":0,"start_ts":10,"end_ts":40,"issue_key":"","reason":"other"}' \
+  'THIS IS NOT JSON' \
+  '{"session_id":"g2","project_dir":"/p/a","active_seconds":70,"duration_seconds":70,"idle_seconds":0,"start_ts":50,"end_ts":120,"issue_key":"","reason":"other"}' \
+  > "$SE3/history.jsonl"
+st_import_history; rc=$?
+assert_eq "resilient import returns 0" "0" "$rc"
+assert_eq "valid rows salvaged (2)" "2" "$(one "SELECT COUNT(*) FROM sessions WHERE session_id IN ('g1','g2');")"
+assert_eq "salvaged total correct" "100" "$(one "SELECT COALESCE(SUM(active_seconds),0) FROM sessions WHERE session_id IN ('g1','g2');")"
+assert_eq "malformed file renamed after salvage" "no" "$([ -f "$SE3/history.jsonl" ] && echo yes || echo no)"
 
 finish

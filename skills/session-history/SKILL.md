@@ -37,8 +37,10 @@ JSONL log (deduped to one row per session) when `sqlite3` or the DB is missing:
 
 ```bash
 DB="$HOME/.claude/session-env/history.db"
+HIST="$HOME/.claude/session-env/history.jsonl"
 today=$(date +%Y-%m-%d)
-if command -v sqlite3 >/dev/null 2>&1 && [ -f "$DB" ]; then
+if command -v sqlite3 >/dev/null 2>&1 && [ -f "$DB" ] \
+   && { [ ! -f "$HIST" ] || [ "$(sqlite3 "$DB" 'SELECT COUNT(*) FROM sessions;' 2>/dev/null || echo 0)" -gt 0 ]; }; then
   sqlite3 -separator $'\t' "$DB" "
     SELECT strftime('%H:%M', s.start_ts, 'unixepoch','localtime'),
            strftime('%H:%M', s.end_ts,   'unixepoch','localtime'),
@@ -50,7 +52,6 @@ if command -v sqlite3 >/dev/null 2>&1 && [ -f "$DB" ]; then
     ORDER BY s.start_ts;"
 else
   # legacy fallback (deduped): one row per session_id
-  HIST="$HOME/.claude/session-env/history.jsonl"
   jq -rs --arg today "$today" '
     map(select((.start_ts|strflocaltime("%Y-%m-%d"))==$today))
     | group_by(.session_id) | map(max_by(.end_ts))
@@ -63,11 +64,12 @@ fi
 
 ```bash
 DB="$HOME/.claude/session-env/history.db"
+HIST="$HOME/.claude/session-env/history.jsonl"
 today=$(date +%Y-%m-%d)
-if command -v sqlite3 >/dev/null 2>&1 && [ -f "$DB" ]; then
+if command -v sqlite3 >/dev/null 2>&1 && [ -f "$DB" ] \
+   && { [ ! -f "$HIST" ] || [ "$(sqlite3 "$DB" 'SELECT COUNT(*) FROM sessions;' 2>/dev/null || echo 0)" -gt 0 ]; }; then
   sqlite3 "$DB" "SELECT COALESCE(SUM(active_seconds),0) FROM sessions WHERE date(start_ts,'unixepoch','localtime')='$today';"
 else
-  HIST="$HOME/.claude/session-env/history.jsonl"
   jq -s --arg today "$today" 'map(select((.start_ts|strflocaltime("%Y-%m-%d"))==$today)) | group_by(.session_id) | map(max_by(.end_ts).active_seconds) | add // 0' "$HIST"
 fi
 ```
