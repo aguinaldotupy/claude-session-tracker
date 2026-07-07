@@ -66,3 +66,28 @@ INSERT INTO sessions(session_id,project_id,project_dir,branch,issue_key,
 COMMIT;
 SQL
 }
+
+# st_import_events sid events_log — replace this session's events with the log's
+# contents (idempotent). Lines are "KIND TS [TOOL]"; malformed lines skipped.
+st_import_events() {
+  st_has_sqlite || return 1
+  local sid="$1" log="$2"
+  [ -f "$log" ] || return 0
+  local e_sid; e_sid="$(st_sql_escape "$sid")"
+  {
+    printf 'BEGIN;\n'
+    printf "DELETE FROM events WHERE session_id='%s';\n" "$e_sid"
+    local kind ts tool _rest e_tool
+    while read -r kind ts tool _rest; do
+      case "$kind" in P|S|T|D|DF|SF) ;; *) continue ;; esac
+      case "$ts" in ''|*[!0-9]*) continue ;; esac
+      if [ -n "$tool" ]; then
+        e_tool="$(st_sql_escape "$tool")"
+        printf "INSERT INTO events(session_id,ts,kind,tool) VALUES('%s',%s,'%s','%s');\n" "$e_sid" "$ts" "$kind" "$e_tool"
+      else
+        printf "INSERT INTO events(session_id,ts,kind,tool) VALUES('%s',%s,'%s',NULL);\n" "$e_sid" "$ts" "$kind"
+      fi
+    done < "$log"
+    printf 'COMMIT;\n'
+  } | sqlite3 "$(st_db_path)" 2>/dev/null
+}

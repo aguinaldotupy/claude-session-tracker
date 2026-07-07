@@ -62,4 +62,24 @@ assert_eq "quote path stored" "$TMP/o'brien" "$(one "SELECT project_dir FROM ses
 st_upsert_session "sPad" "$repo" "$repo" "" "" 0100 0100 0100 0100 0 "other" 0100
 assert_eq "zero-padded active is base-10" "100" "$(one "SELECT active_seconds FROM sessions WHERE session_id='sPad';")"
 
+# --- st_import_events ---
+st_db_init
+# session row must exist first (FK target)
+st_upsert_session "sE" "$repo" "$repo" "main" "" 2000 2100 100 80 20 "other" 2101
+printf 'P 2000\nT 2005 Read\nD 2017 Read\nDF 2050 Bash\nSF 2100\n' > "$TMP/ev.log"
+
+st_import_events "sE" "$TMP/ev.log"
+assert_eq "events imported" "5" "$(one "SELECT COUNT(*) FROM events WHERE session_id='sE';")"
+assert_eq "DF kind stored" "1" "$(one "SELECT COUNT(*) FROM events WHERE session_id='sE' AND kind='DF';")"
+assert_eq "tool captured" "Read" "$(one "SELECT tool FROM events WHERE session_id='sE' AND kind='T';")"
+
+# re-import is idempotent (delete-then-insert), not additive
+st_import_events "sE" "$TMP/ev.log"
+assert_eq "re-import no dup" "5" "$(one "SELECT COUNT(*) FROM events WHERE session_id='sE';")"
+
+# malformed lines are skipped
+printf 'garbage\nP notanumber\nP 2200\n' > "$TMP/bad.log"
+st_import_events "sE" "$TMP/bad.log"
+assert_eq "only valid line kept" "1" "$(one "SELECT COUNT(*) FROM events WHERE session_id='sE';")"
+
 finish
