@@ -5,23 +5,19 @@ description: Use when user asks about past sessions, worklog, accumulated hours,
 
 # Session History
 
-Reports aggregated Claude Code session history from the persistent JSONL log written by the `SessionEnd` hook.
+Reports aggregated Claude Code session history from the SQLite store written by the `SessionEnd` hook (with a JSON-lines fallback when `sqlite3` is unavailable).
 
 ## Mechanism
 
-Each time a session ends, the `SessionEnd` hook appends one JSON line to `$HOME/.claude/session-env/history.jsonl` with:
+Each time a session ends, the `SessionEnd` hook upserts one row into the SQLite database at `$HOME/.claude/session-env/history.db` — one row per `session_id` in the `sessions` table (joined to `projects` for the canonical, worktree-grouped project), plus that session's heartbeats in `events`. Because the write is an upsert keyed on `session_id`, a session that ends repeatedly (e.g. across resume) stays a single row — totals are not double-counted. When `sqlite3` is absent the hook falls back to appending one JSON line to `$HOME/.claude/session-env/history.jsonl`, which the next session imports.
 
-```json
-{"session_id":"...","start_ts":0,"end_ts":0,"duration_seconds":0,"active_seconds":0,"project_dir":"...","reason":"exit|clear|logout"}
-```
+Each session row carries `active_seconds` (working time — what the table and totals report), `duration_seconds` (wall-clock, available on request), `branch`, and `issue_key`.
 
-The `active_seconds` field (working time) is what the table and totals report; `duration_seconds` (wall-clock) is available if you explicitly ask for it.
-
-The current (still running) session is NOT in the log — only completed sessions are. If the user also wants the live elapsed time, combine with `session-tracker:session-status`.
+The current (still running) session is NOT in the store — only completed sessions are. If the user also wants the live elapsed time, combine with `session-tracker:session-status`.
 
 ## Usage
 
-Parse the log with `jq`, filter by date and/or project, then render a markdown table.
+Query the SQLite store with `sqlite3` (falling back to `jq` over the JSONL log when the DB is absent), filter by date and/or project, then render a markdown table. The snippets below show both paths.
 
 ### Filters
 
