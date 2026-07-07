@@ -58,4 +58,8 @@ st_upsert_session "sQ" "$TMP/o'brien" "$TMP/o'brien" "" "" 5 6 1 1 0 "other" 7; 
 assert_eq "quote path no error" "0" "$rc"
 assert_eq "quote path stored" "$TMP/o'brien" "$(one "SELECT project_dir FROM sessions WHERE session_id='sQ';")"
 
+# zero-padded numerics are read as base-10, not octal
+st_upsert_session "sPad" "$repo" "$repo" "" "" 0100 0100 0100 0100 0 "other" 0100
+assert_eq "zero-padded active is base-10" "100" "$(one "SELECT active_seconds FROM sessions WHERE session_id='sPad';")"
+
 finish

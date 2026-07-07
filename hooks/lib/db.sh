@@ -40,8 +40,8 @@ st_project_root() {
 st_upsert_session() {
   st_has_sqlite || return 1
   local sid="$1" root="$2" dir="$3" branch="$4" issue="$5"
-  local start="$(( $6 + 0 ))" end="$(( $7 + 0 ))" dur="$(( $8 + 0 ))"
-  local active="$(( $9 + 0 ))" idle="$(( ${10} + 0 ))" reason="${11}" now="$(( ${12} + 0 ))"
+  local start="$(( 10#${6:-0} ))" end="$(( 10#${7:-0} ))" dur="$(( 10#${8:-0} ))"
+  local active="$(( 10#${9:-0} ))" idle="$(( 10#${10:-0} ))" reason="${11}" now="$(( 10#${12:-0} ))"
   local name; name="$(basename "$root")"
   local e_sid e_root e_dir e_branch e_issue e_name e_reason
   e_sid="$(st_sql_escape "$sid")";     e_root="$(st_sql_escape "$root")"
