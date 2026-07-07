@@ -5,6 +5,29 @@ All notable changes to this plugin are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Relational SQLite session store at `~/.claude/session-env/history.db`
+  (`projects`/`sessions`/`events`), replacing the append-only `history.jsonl`
+  as the aggregate log. Heartbeats stay in the per-session text `events.log`
+  (hot-path); SQLite is written once per session at `SessionEnd`.
+- Canonical `project_root` (via `git rev-parse --git-common-dir`) so all
+  worktrees of a repo group under one project, independent of the worktree path.
+- `Branch/Issue` column in `session-history`; per-session forensic timeline now
+  served from the durable `events` table.
+- Automatic, idempotent migration of `history.jsonl` into SQLite on the first
+  session after upgrade (file renamed `history.jsonl.imported`).
+
+### Fixed
+- **Session time totals were inflated ~78%.** `SessionEnd` appended a fresh
+  cumulative row on every session close (and fires repeatedly across
+  resume/`--continue` for a stable `session_id`), so summing rows double-counted.
+  With `session_id` as a primary key and upsert, each session is exactly one row.
+
+### Changed
+- `sqlite3` is a new soft dependency (falls back to JSON-lines when absent).
+
 ## [2.6.0] - 2026-07-07
 
 ### Added

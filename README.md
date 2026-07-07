@@ -97,7 +97,9 @@ The timer resets to zero from the current time. The `/clear` command also resets
 
 ### Session History & Worklog
 
-Each time a session ends, the `SessionEnd` hook appends one JSON line to `~/.claude/session-env/history.jsonl` with the session id, start/end timestamps, duration in seconds, project directory, and exit reason.
+Each time a session ends, the `SessionEnd` hook records the session (id, start/end timestamps, duration, project, branch/issue, and exit reason) in the local SQLite database at `~/.claude/session-env/history.db`. If `sqlite3` isn't installed, it falls back to appending a JSON line to `~/.claude/session-env/history.jsonl` instead.
+
+**Migration:** on the first session after upgrading, any existing `history.jsonl` is imported into SQLite automatically and renamed `history.jsonl.imported`. No action needed.
 
 Query it with `/session-tracker:session-history` or ask naturally:
 
@@ -189,6 +191,11 @@ claude plugin update session-tracker@aguinaldotupy --scope user
 
 - Claude Code >= 2.1.x
 - bash, date, cat, jq (standard on macOS and Linux; install jq if missing)
+- **`sqlite3`** (soft dependency) — the session history is stored in a local
+  SQLite database at `~/.claude/session-env/history.db`. If `sqlite3` is not
+  installed the plugin still works, falling back to a JSON-lines log; install
+  `sqlite3` to get the relational store, correct cross-session totals, and
+  per-project (worktree-aware) grouping. Present by default on macOS.
 
 ## License
 
