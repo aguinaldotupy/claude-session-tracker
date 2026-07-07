@@ -49,4 +49,9 @@ st_import_events "a" "$TMP/tl-events.log"
 tl=$(one "SELECT group_concat(kind||'@'||ts, ',') FROM (SELECT kind,ts FROM events WHERE session_id='a' ORDER BY ts);")
 assert_eq "timeline ordered" "P@500,T@505,D@517,S@560" "$tl"
 
+# a worktree whose PATH lacks the repo name still groups via project_root (the feature's core claim)
+st_upsert_session "d" "/p/bel" "/tmp/wt-xyz" "feature2" "" "$TODAY_TS" "$TODAY_TS" 10 10 0 "other" "$TODAY_TS"
+cnt2=$(one "SELECT COUNT(*) FROM sessions s JOIN projects p ON p.id=s.project_id WHERE p.project_root LIKE '%bel%' OR s.project_dir LIKE '%bel%';")
+assert_eq "grouping catches path without repo name" "4" "$cnt2"
+
 finish

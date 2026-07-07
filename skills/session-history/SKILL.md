@@ -62,10 +62,14 @@ fi
 ### Sum total for the day
 
 ```bash
-jq -s --arg today "$today" '
-  map(select((.start_ts | strflocaltime("%Y-%m-%d")) == $today))
-  | map(.active_seconds) | add // 0
-' "$HISTORY"
+DB="$HOME/.claude/session-env/history.db"
+today=$(date +%Y-%m-%d)
+if command -v sqlite3 >/dev/null 2>&1 && [ -f "$DB" ]; then
+  sqlite3 "$DB" "SELECT COALESCE(SUM(active_seconds),0) FROM sessions WHERE date(start_ts,'unixepoch','localtime')='$today';"
+else
+  HIST="$HOME/.claude/session-env/history.jsonl"
+  jq -s --arg today "$today" 'map(select((.start_ts|strflocaltime("%Y-%m-%d"))==$today)) | group_by(.session_id) | map(max_by(.end_ts).active_seconds) | add // 0' "$HIST"
+fi
 ```
 
 Convert the integer seconds to `Xh Ym` for display.
