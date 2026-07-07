@@ -51,19 +51,29 @@ fi
 
 ## Daily Total (additional)
 
-After showing the live session, also report today's accumulated total by summing active (working) seconds from `$HOME/.claude/session-env/history.jsonl` for entries whose `start_ts` falls on today's local date, and adding the current live active time:
+After showing the live session, also report today's accumulated total by adding
+the current live active time to today's finished-session total.
+
+Compute today's finished-session total from the SQLite store (one row per
+session — no double-counting). Falls back to the legacy JSONL when `sqlite3`
+or the DB is absent:
 
 ```bash
-HISTORY="$HOME/.claude/session-env/history.jsonl"
-today_past=0
-if [ -f "$HISTORY" ]; then
-  today=$(date +%Y-%m-%d)
-  today_past=$(jq -s --arg today "$today" '
-    map(select((.start_ts | strflocaltime("%Y-%m-%d")) == $today))
-    | map(.active_seconds // 0) | add // 0
-  ' "$HISTORY")
+DB="$HOME/.claude/session-env/history.db"
+today=$(date +%Y-%m-%d)
+if command -v sqlite3 >/dev/null 2>&1 && [ -f "$DB" ]; then
+  today_past=$(sqlite3 "$DB" "SELECT COALESCE(SUM(active_seconds),0) FROM sessions WHERE date(start_ts,'unixepoch','localtime')='$today';")
+else
+  HIST="$HOME/.claude/session-env/history.jsonl"
+  today_past=$([ -f "$HIST" ] && jq -s --arg t "$today" 'map(select((.start_ts|strflocaltime("%Y-%m-%d"))==$t)) | group_by(.session_id) | map(max_by(.end_ts).active_seconds) | add // 0' "$HIST" || echo 0)
 fi
 total_today=$((today_past + active))
+```
+
+Note the fallback jq now also dedups (`group_by(.session_id)|max_by(.end_ts)`)
+so even the legacy path reports the corrected (non-inflated) total.
+
+```bash
 th=$((total_today / 3600))
 tm=$(((total_today % 3600) / 60))
 if [ $th -gt 0 ]; then
