@@ -20,3 +20,17 @@ st_db_init() {
   mkdir -p "$dir"
   sqlite3 "$db" < "$schema" >/dev/null 2>&1
 }
+
+# Canonical project root for a cwd, immune to the worktree path config:
+# dirname(git-common-dir). Falls back to the cwd for non-git directories.
+st_project_root() {
+  local cwd="$1" common
+  command -v git >/dev/null 2>&1 || { printf '%s' "$cwd"; return; }
+  common="$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+    || common="$(git -C "$cwd" rev-parse --git-common-dir 2>/dev/null)"
+  case "$common" in
+    '') printf '%s' "$cwd" ;;
+    /*) (cd "$(dirname "$common")" 2>/dev/null && pwd) || printf '%s' "$cwd" ;;
+    *)  (cd "$cwd/$(dirname "$common")" 2>/dev/null && pwd) || printf '%s' "$cwd" ;;
+  esac
+}
