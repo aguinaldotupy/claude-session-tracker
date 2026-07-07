@@ -36,4 +36,15 @@ st_import_history; rc=$?
 assert_eq "second run clean" "0" "$rc"
 assert_eq "still two sessions" "2" "$(one "SELECT COUNT(*) FROM sessions;")"
 
+# fix #1: legacy branch is real SQL NULL, not empty string
+assert_eq "legacy branch is NULL" "1" "$(one "SELECT branch IS NULL FROM sessions WHERE session_id='dup';")"
+
+# fix #2: a malformed history.jsonl is preserved (not renamed) and returns non-zero
+SE2="$HOME/.claude/session-env"
+printf '{"session_id":"ok","project_dir":"/p","start_ts":1,"end_ts":2,"active_seconds":5}\nNOT JSON\n' > "$SE2/history.jsonl"
+st_import_history; rc=$?
+assert_eq "malformed history returns non-zero" "1" "$rc"
+assert_eq "malformed history preserved" "yes" "$([ -f "$SE2/history.jsonl" ] && echo yes || echo no)"
+assert_eq "malformed history not imported" "0" "$(one "SELECT COUNT(*) FROM sessions WHERE session_id='ok';")"
+
 finish

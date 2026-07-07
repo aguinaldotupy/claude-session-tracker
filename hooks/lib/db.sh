@@ -43,11 +43,14 @@ st_upsert_session() {
   local start="$(( 10#${6:-0} ))" end="$(( 10#${7:-0} ))" dur="$(( 10#${8:-0} ))"
   local active="$(( 10#${9:-0} ))" idle="$(( 10#${10:-0} ))" reason="${11}" now="$(( 10#${12:-0} ))"
   local name; name="$(basename "$root")"
-  local e_sid e_root e_dir e_branch e_issue e_name e_reason
+  local e_sid e_root e_dir e_name e_reason
   e_sid="$(st_sql_escape "$sid")";     e_root="$(st_sql_escape "$root")"
-  e_dir="$(st_sql_escape "$dir")";     e_branch="$(st_sql_escape "$branch")"
-  e_issue="$(st_sql_escape "$issue")"; e_name="$(st_sql_escape "$name")"
+  e_dir="$(st_sql_escape "$dir")";     e_name="$(st_sql_escape "$name")"
   e_reason="$(st_sql_escape "$reason")"
+  # branch / issue_key: emit SQL NULL when empty, else an escaped quoted literal
+  local branch_sql issue_sql
+  if [ -n "$branch" ]; then branch_sql="'$(st_sql_escape "$branch")'"; else branch_sql="NULL"; fi
+  if [ -n "$issue" ];  then issue_sql="'$(st_sql_escape "$issue")'";  else issue_sql="NULL";  fi
   sqlite3 "$(st_db_path)" <<SQL 2>/dev/null
 BEGIN;
 INSERT INTO projects(project_root,name,first_seen_ts,last_seen_ts)
@@ -55,7 +58,7 @@ INSERT INTO projects(project_root,name,first_seen_ts,last_seen_ts)
   ON CONFLICT(project_root) DO UPDATE SET last_seen_ts=$now;
 INSERT INTO sessions(session_id,project_id,project_dir,branch,issue_key,
                      start_ts,end_ts,duration_seconds,active_seconds,idle_seconds,reason,updated_at)
-  VALUES('$e_sid',(SELECT id FROM projects WHERE project_root='$e_root'),'$e_dir','$e_branch','$e_issue',
+  VALUES('$e_sid',(SELECT id FROM projects WHERE project_root='$e_root'),'$e_dir',$branch_sql,$issue_sql,
          $start,$end,$dur,$active,$idle,'$e_reason',$now)
   ON CONFLICT(session_id) DO UPDATE SET
     end_ts=excluded.end_ts, duration_seconds=excluded.duration_seconds,
