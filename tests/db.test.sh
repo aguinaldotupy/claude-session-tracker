@@ -82,4 +82,17 @@ printf 'garbage\nP notanumber\nP 2200\n' > "$TMP/bad.log"
 st_import_events "sE" "$TMP/bad.log"
 assert_eq "only valid line kept" "1" "$(one "SELECT COUNT(*) FROM events WHERE session_id='sE';")"
 
+# missing log is a clean no-op: returns 0, inserts nothing new
+before=$(one "SELECT COUNT(*) FROM events WHERE session_id='sE';")
+st_import_events "sE" "$TMP/does-not-exist.log"; rc=$?
+after=$(one "SELECT COUNT(*) FROM events WHERE session_id='sE';")
+assert_eq "missing log returns 0" "0" "$rc"
+assert_eq "missing log inserts nothing" "$before" "$after"
+
+# a no-tool kind (S) is stored with tool IS NULL, not empty string
+st_upsert_session "sNull" "$repo" "$repo" "" "" 4000 4100 100 80 20 "other" 4101
+printf 'P 4000\nS 4100\n' > "$TMP/null.log"
+st_import_events "sNull" "$TMP/null.log"
+assert_eq "no-tool kind stores NULL" "2" "$(one "SELECT COUNT(*) FROM events WHERE session_id='sNull' AND tool IS NULL;")"
+
 finish
