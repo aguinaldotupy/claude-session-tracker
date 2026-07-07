@@ -19,4 +19,15 @@ assert_eq "deployed copy matches source" "same" "$d"
 assert_eq "start timestamp written" "yes" \
   "$([ -f "$TMP/.claude/session-env/$SID/session-tracker" ] && echo yes || echo no)"
 
+# --- SQLite store bootstrap ---
+SE2="$TMP/.claude/session-env"; mkdir -p "$SE2"
+cat > "$SE2/history.jsonl" <<'JSON'
+{"session_id":"m1","project_dir":"/p/x","active_seconds":42,"duration_seconds":42,"idle_seconds":0,"start_ts":10,"end_ts":52,"reason":"other"}
+JSON
+echo '{"session_id":"boot-1","source":"startup"}' | bash "$ROOT/hooks/session-start.sh" >/dev/null
+db="$SE2/history.db"
+assert_eq "db created on start" "yes" "$([ -f "$db" ] && echo yes || echo no)"
+assert_eq "history migrated on start" "42" "$(sqlite3 "$db" "SELECT active_seconds FROM sessions WHERE session_id='m1';")"
+assert_eq "history file renamed" "no" "$([ -f "$SE2/history.jsonl" ] && echo yes || echo no)"
+
 finish
