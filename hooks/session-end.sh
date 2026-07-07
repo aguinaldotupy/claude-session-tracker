@@ -62,6 +62,27 @@ set -uo pipefail
     fi
   fi
 
+  # Canonical project root (worktree-immune) + branch, via the shared lib.
+  DB_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/db.sh"
+  PROJECT_ROOT="$CWD"; BRANCH=""
+  if [ -f "$DB_LIB" ]; then
+    # shellcheck source=/dev/null
+    . "$DB_LIB"
+    PROJECT_ROOT="$(st_project_root "$CWD")"
+    BRANCH="$(git -C "$CWD" branch --show-current 2>/dev/null || true)"
+  fi
+
+  NOW="$(date +%s)"
+  if [ -f "$DB_LIB" ] && st_has_sqlite; then
+    st_db_init 2>/dev/null || true
+    if st_upsert_session "$SESSION_ID" "$PROJECT_ROOT" "$CWD" "$BRANCH" "$ISSUE_KEY" \
+         "$START_TS" "$END_TS" "$DURATION" "$ACTIVE_SECONDS" "$IDLE_SECONDS" "$REASON" "$NOW"; then
+      st_import_events "$SESSION_ID" "$EVENTS_FILE" 2>/dev/null || true
+      exit 0
+    fi
+  fi
+  # Fallback: sqlite3 unavailable or upsert failed → legacy JSONL append (imported next start).
+
   mkdir -p "$(dirname "$HISTORY_FILE")"
 
   LINE=$(jq -c -n \
