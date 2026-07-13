@@ -5,43 +5,31 @@
 _ST_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_ST_LIB_DIR/db.sh"
 
+# Migrate history.jsonl → SQLite in a SINGLE sqlite3 transaction. One jq process
+# (raw-input + `fromjson?`) emits every upsert and skips malformed lines, so a
+# multi-thousand-row history imports in well under a second — critical because
+# this runs inside the SessionStart hook's 5s timeout. A per-row sqlite3 spawn
+# (the previous approach) took ~85s for ~3000 rows and was killed mid-migration,
+# leaving a partial DB that never got renamed. The file is renamed to `.imported`
+# only on a clean import (sqlite3 exit 0, no stderr); any error preserves it for
+# a retry on the next start.
 st_import_history() {
   st_has_sqlite || return 1
   command -v jq >/dev/null 2>&1 || return 1
   local hist; hist="$HOME/.claude/session-env/history.jsonl"
   [ -f "$hist" ] || return 0
   st_db_init || return 1
-  local now; now="$(date +%s)"
-
-  # Emit one TSV row per line: sid, project_dir, active, dur, idle, start, end, issue, reason.
-  # Legacy rows: project_root := project_dir, branch := NULL, active := active // duration // 0.
-  # Flock so parallel SessionStart runs don't both import (upsert makes it harmless anyway).
-  # Fast path (whole file valid JSON): one jq stream. Slow path (a line is malformed):
-  # per-line jq so valid rows are salvaged and only bad lines are skipped.
-  # Rename to .imported only if every upsert of a salvaged/streamed row succeeded.
+  local now db jqprog err rc
+  now="$(date +%s)"
+  db="$(st_db_path)"
+  jqprog="$_ST_LIB_DIR/import-history.jq"
+  [ -f "$jqprog" ] || return 1
   {
     flock 9 2>/dev/null || true
-    local fail=0
-    if jq empty "$hist" 2>/dev/null; then
-      # fast path: whole file is valid JSON — stream it through one jq
-      while IFS=$'\t' read -r sid dir active dur idle start end issue reason; do
-        [ -z "$sid" ] && continue
-        st_upsert_session "$sid" "$dir" "$dir" "" "$issue" "$start" "$end" "$dur" "$active" "$idle" "$reason" "$now" || fail=1
-      done < <(jq -rc '[.session_id,(.project_dir//""),(.active_seconds // .duration_seconds // 0),(.duration_seconds//0),(.idle_seconds//0),(.start_ts//0),(.end_ts//0),(.issue_key//""),(.reason//"")] | @tsv' "$hist" 2>/dev/null)
-    else
-      # resilient path: a line is malformed — salvage valid lines, skip bad ones
-      local line fields
-      while IFS= read -r line; do
-        [ -z "$line" ] && continue
-        fields="$(printf '%s\n' "$line" | jq -rc '[.session_id,(.project_dir//""),(.active_seconds // .duration_seconds // 0),(.duration_seconds//0),(.idle_seconds//0),(.start_ts//0),(.end_ts//0),(.issue_key//""),(.reason//"")] | @tsv' 2>/dev/null)" || continue
-        [ -z "$fields" ] && continue
-        IFS=$'\t' read -r sid dir active dur idle start end issue reason <<< "$fields"
-        [ -z "$sid" ] && continue
-        st_upsert_session "$sid" "$dir" "$dir" "" "$issue" "$start" "$end" "$dur" "$active" "$idle" "$reason" "$now" || fail=1
-      done < "$hist"
-    fi
-    if [ "$fail" -eq 0 ]; then
-      sqlite3 "$(st_db_path)" "INSERT INTO meta(key,value) VALUES('history_imported_at','$now')
+    err="$( { printf 'BEGIN;\n'; jq -R -r --argjson now "$now" -f "$jqprog" "$hist" 2>/dev/null; printf 'COMMIT;\n'; } | sqlite3 "$db" 2>&1 )"
+    rc=$?
+    if [ "$rc" -eq 0 ] && [ -z "$err" ]; then
+      sqlite3 "$db" "INSERT INTO meta(key,value) VALUES('history_imported_at','$now')
         ON CONFLICT(key) DO UPDATE SET value='$now';" 2>/dev/null
       mv -f "$hist" "$hist.imported" 2>/dev/null || true
     else

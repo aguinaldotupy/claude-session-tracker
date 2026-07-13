@@ -55,15 +55,16 @@ After showing the live session, also report today's accumulated total by adding
 the current live active time to today's finished-session total.
 
 Compute today's finished-session total from the SQLite store (one row per
-session — no double-counting). Falls back to the legacy JSONL when `sqlite3`
-or the DB is absent:
+session — no double-counting). Falls back to the legacy JSONL (deduped) when
+`sqlite3`/the DB is absent OR while `history.jsonl` still exists (i.e. the
+migration hasn't completed yet — the JSONL is the complete source until it is
+renamed to `.imported`):
 
 ```bash
 DB="$HOME/.claude/session-env/history.db"
 HIST="$HOME/.claude/session-env/history.jsonl"
 today=$(date +%Y-%m-%d)
-if command -v sqlite3 >/dev/null 2>&1 && [ -f "$DB" ] \
-   && { [ ! -f "$HIST" ] || [ "$(sqlite3 "$DB" 'SELECT COUNT(*) FROM sessions;' 2>/dev/null || echo 0)" -gt 0 ]; }; then
+if command -v sqlite3 >/dev/null 2>&1 && [ -f "$DB" ] && [ ! -f "$HIST" ]; then
   today_past=$(sqlite3 "$DB" "SELECT COALESCE(SUM(active_seconds),0) FROM sessions WHERE date(start_ts,'unixepoch','localtime')='$today';")
 else
   today_past=$([ -f "$HIST" ] && jq -s --arg t "$today" 'map(select((.start_ts|strflocaltime("%Y-%m-%d"))==$t)) | group_by(.session_id) | map(max_by(.end_ts).active_seconds) | add // 0' "$HIST" || echo 0)

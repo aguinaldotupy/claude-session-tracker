@@ -62,4 +62,18 @@ assert_eq "valid rows salvaged (2)" "2" "$(one "SELECT COUNT(*) FROM sessions WH
 assert_eq "salvaged total correct" "100" "$(one "SELECT COALESCE(SUM(active_seconds),0) FROM sessions WHERE session_id IN ('g1','g2');")"
 assert_eq "malformed file renamed after salvage" "no" "$([ -f "$SE3/history.jsonl" ] && echo yes || echo no)"
 
+# regression (v3.0.1): a large history must import in ONE pass — every session,
+# not a partial subset (the per-row sqlite3 spawn migration was killed by the
+# SessionStart 5s timeout after ~150 of ~3000 rows, leaving a partial DB).
+: > "$SE3/history.jsonl"
+i=0
+while [ "$i" -lt 500 ]; do
+  printf '{"session_id":"bulk-%s","project_dir":"/p/bulk","active_seconds":1,"duration_seconds":1,"idle_seconds":0,"start_ts":%s,"end_ts":%s,"issue_key":"","reason":"other"}\n' "$i" "$i" "$((i+1))" >> "$SE3/history.jsonl"
+  i=$((i+1))
+done
+st_import_history; rc=$?
+assert_eq "bulk import returns 0" "0" "$rc"
+assert_eq "all 500 rows imported (no partial cutoff)" "500" "$(one "SELECT COUNT(*) FROM sessions WHERE session_id LIKE 'bulk-%';")"
+assert_eq "bulk file renamed after full import" "no" "$([ -f "$SE3/history.jsonl" ] && echo yes || echo no)"
+
 finish
