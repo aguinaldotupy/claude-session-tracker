@@ -5,6 +5,23 @@ All notable changes to this plugin are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.1] - 2026-07-13
+
+### Fixed
+- **Migration of a large `history.jsonl` never completed, so session totals were
+  wrong.** The v3.0.0 importer ran one `sqlite3` process per session (~85s for
+  ~3000 rows) inside the `SessionStart` hook's 5s timeout — it was killed after
+  ~150 rows, never renamed the file, and re-thrashed every start, leaving a
+  partial database. The read path then preferred that partial DB over the
+  complete JSON-lines log, so `session-status`/`session-history` reported only a
+  fraction of sessions. The importer now runs as a single `sqlite3` transaction
+  fed by one `jq` stream (skipping malformed lines), migrating thousands of rows
+  in well under a second.
+- While `history.jsonl` still exists (migration pending or running without
+  `sqlite3`), the skills now read the complete deduped JSON-lines log instead of
+  an incomplete database; SQLite becomes authoritative only once the file is
+  migrated and renamed to `history.jsonl.imported`.
+
 ## [3.0.0] - 2026-07-07
 
 ### Added
@@ -119,6 +136,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: `SessionStart` hook + `session-status` skill + optional
   statusline snippet for live elapsed time.
 
+[3.0.1]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v2.6.0...v3.0.0
 [2.6.0]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v2.5.0...v2.6.0
 [2.5.0]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v2.4.0...v2.5.0
