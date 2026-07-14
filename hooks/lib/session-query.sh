@@ -52,10 +52,74 @@ EOF
     '{source:$source, live:{elapsed_seconds:$elapsed, active_seconds:$active, started_at:$started, issue_key:$issue}, today:{active_seconds:$tsecs, sessions:$tcount}}'
 }
 
+# SQL WHERE fragment (on start_ts) for a --range value. Portable: SQLite date().
+_sq_sql_where() {
+  case "$1" in
+    today)     echo "date(start_ts,'unixepoch','localtime')=date('now','localtime')" ;;
+    yesterday) echo "date(start_ts,'unixepoch','localtime')=date('now','-1 day','localtime')" ;;
+    7d)        echo "date(start_ts,'unixepoch','localtime')>=date('now','-6 days','localtime')" ;;
+    30d)       echo "date(start_ts,'unixepoch','localtime')>=date('now','-29 days','localtime')" ;;
+    *..*)      local f="${1%%..*}" t="${1##*..}"
+               f="$(st_sql_escape "$f")"; t="$(st_sql_escape "$t")"
+               echo "date(start_ts,'unixepoch','localtime') BETWEEN date('$f') AND date('$t')" ;;
+    *)         echo "date(start_ts,'unixepoch','localtime')=date('now','localtime')" ;;
+  esac
+}
+
+# jq boolean on . for the JSONL fallback. Uses local date strings (portable).
+_sq_jq_range() {
+  case "$1" in
+    today)     echo '(.start_ts|strflocaltime("%Y-%m-%d")) == (now|strflocaltime("%Y-%m-%d"))' ;;
+    yesterday) echo '(.start_ts|strflocaltime("%Y-%m-%d")) == ((now-86400)|strflocaltime("%Y-%m-%d"))' ;;
+    7d)        echo '(.start_ts|strflocaltime("%Y-%m-%d")) >= ((now-6*86400)|strflocaltime("%Y-%m-%d"))' ;;
+    30d)       echo '(.start_ts|strflocaltime("%Y-%m-%d")) >= ((now-29*86400)|strflocaltime("%Y-%m-%d"))' ;;
+    *..*)      local f="${1%%..*}" t="${1##*..}"
+               printf '(.start_ts|strflocaltime("%%Y-%%m-%%d")) >= "%s" and (.start_ts|strflocaltime("%%Y-%%m-%%d")) <= "%s"' "$f" "$t" ;;
+    *)         echo '(.start_ts|strflocaltime("%Y-%m-%d")) == (now|strflocaltime("%Y-%m-%d"))' ;;
+  esac
+}
+
+sq_history() {
+  local range="today" project="" src rows total count
+  while [ $# -gt 0 ]; do case "$1" in --range) range="$2"; shift 2 ;; --project) project="$2"; shift 2 ;; *) shift ;; esac; done
+  src="$(_sq_source)"
+  if [ "$src" = sqlite ]; then
+    local where; where="$(_sq_sql_where "$range")"
+    local pfilter="1"
+    if [ -n "$project" ]; then local ep; ep="$(st_sql_escape "$project")"; pfilter="(p.project_root LIKE '%$ep%' OR s.project_dir LIKE '%$ep%')"; fi
+    rows="$(sqlite3 -json "$(st_db_path)" "
+      SELECT s.start_ts AS start,
+             strftime('%H:%M', s.start_ts,'unixepoch','localtime') AS start_local,
+             s.end_ts AS end,
+             strftime('%H:%M', s.end_ts,'unixepoch','localtime') AS end_local,
+             s.active_seconds AS active_seconds,
+             p.name AS project,
+             COALESCE(NULLIF(s.issue_key,''),NULLIF(s.branch,''),'—') AS branch_issue
+      FROM sessions s LEFT JOIN projects p ON p.id=s.project_id
+      WHERE $where AND $pfilter ORDER BY s.start_ts;" 2>/dev/null)"
+    [ -z "$rows" ] && rows='[]'
+  elif [ "$src" = jsonl ]; then
+    local rexpr pexpr; rexpr="$(_sq_jq_range "$range")"
+    if [ -n "$project" ]; then pexpr="((.project_dir//\"\")|ascii_downcase|contains(\"$(printf '%s' "$project" | tr '[:upper:]' '[:lower:]')\"))"; else pexpr="true"; fi
+    rows="$(jq -s --sort-keys "map(select(($rexpr) and ($pexpr))) | group_by(.session_id) | map(max_by(.end_ts))
+      | map({start:.start_ts, start_local:(.start_ts|strflocaltime(\"%H:%M\")), end:.end_ts, end_local:(.end_ts|strflocaltime(\"%H:%M\")),
+             active_seconds:(.active_seconds // .duration_seconds // 0), project:((.project_dir//\"\")|split(\"/\")|last), branch_issue:((.issue_key // \"—\"))})" "$(_sq_hist)" 2>/dev/null)"
+    [ -z "$rows" ] && rows='[]'
+  else
+    rows='[]'
+  fi
+  printf '%s' "$rows" | jq -e . >/dev/null 2>&1 || rows='[]'
+  total="$(printf '%s' "$rows" | jq '[.[].active_seconds]|add // 0')"
+  count="$(printf '%s' "$rows" | jq 'length')"
+  jq -n --arg source "$src" --argjson rows "$rows" --argjson total "$total" --argjson count "$count" \
+    '{source:$source, total_active_seconds:$total, count:$count, rows:$rows}'
+}
+
 _sq_main() {
   local cmd="${1:-}"; shift 2>/dev/null || true
   case "$cmd" in
     status)   sq_status "$@" ;;
+    history)  sq_history "$@" ;;
     *)        jq -n --arg source none '{source:$source,error:"unknown subcommand"}' ;;
   esac
 }

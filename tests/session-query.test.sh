@@ -31,4 +31,25 @@ out="$(bash "$SQ" status --session "$SID")"
 assert_eq "status live active (60+grace120)" "180" "$(printf '%s' "$out" | jq -r .live.active_seconds)"
 assert_eq "status live started_at" "1000" "$(printf '%s' "$out" | jq -r .live.started_at)"
 
+# --- history ---
+# s1 has issue A-1; s2 only a branch → branch_issue falls back to branch
+outh="$(bash "$SQ" history --range today --project a)"
+assert_eq "history valid json" "0" "$(printf '%s' "$outh" | jq -e . >/dev/null 2>&1; echo $?)"
+assert_eq "history source sqlite" "sqlite" "$(printf '%s' "$outh" | jq -r .source)"
+assert_eq "history count 2" "2" "$(printf '%s' "$outh" | jq -r .count)"
+assert_eq "history total 300" "300" "$(printf '%s' "$outh" | jq -r .total_active_seconds)"
+assert_eq "history row s1 branch_issue=issue" "A-1" "$(printf '%s' "$outh" | jq -r '.rows[] | select(.active_seconds==100) | .branch_issue')"
+assert_eq "history row s2 branch_issue=branch" "main" "$(printf '%s' "$outh" | jq -r '.rows[] | select(.active_seconds==200) | .branch_issue')"
+assert_eq "history row has start_local HH:MM" "5" "$(printf '%s' "$outh" | jq -r '.rows[0].start_local' | grep -cE '^[0-9]{2}:[0-9]{2}$' | sed 's/1/5/')"
+
+# project filter miss → empty rows, still valid json, count 0
+outm="$(bash "$SQ" history --range today --project nope)"
+assert_eq "history filter miss count 0" "0" "$(printf '%s' "$outm" | jq -r .count)"
+assert_eq "history filter miss valid json" "0" "$(printf '%s' "$outm" | jq -e . >/dev/null 2>&1; echo $?)"
+
+# a session from 1970 (start_ts small) is excluded by --range today
+st_upsert_session "old" "/p/a" "/p/a" "main" "" 1000 1100 50 50 0 "other" 1101
+assert_eq "history today excludes old" "2" "$(bash "$SQ" history --range today --project a | jq -r .count)"
+assert_eq "history 30d also excludes 1970" "2" "$(bash "$SQ" history --range 30d --project a | jq -r .count)"
+
 finish
