@@ -73,8 +73,7 @@ _sq_jq_range() {
     yesterday) echo '(.start_ts|strflocaltime("%Y-%m-%d")) == ((now-86400)|strflocaltime("%Y-%m-%d"))' ;;
     7d)        echo '(.start_ts|strflocaltime("%Y-%m-%d")) >= ((now-6*86400)|strflocaltime("%Y-%m-%d"))' ;;
     30d)       echo '(.start_ts|strflocaltime("%Y-%m-%d")) >= ((now-29*86400)|strflocaltime("%Y-%m-%d"))' ;;
-    *..*)      local f="${1%%..*}" t="${1##*..}"
-               printf '(.start_ts|strflocaltime("%%Y-%%m-%%d")) >= "%s" and (.start_ts|strflocaltime("%%Y-%%m-%%d")) <= "%s"' "$f" "$t" ;;
+    *..*)      echo '(.start_ts|strflocaltime("%Y-%m-%d")) >= $from and (.start_ts|strflocaltime("%Y-%m-%d")) <= $to' ;;
     *)         echo '(.start_ts|strflocaltime("%Y-%m-%d")) == (now|strflocaltime("%Y-%m-%d"))' ;;
   esac
 }
@@ -99,11 +98,16 @@ sq_history() {
       WHERE $where AND $pfilter ORDER BY s.start_ts;" 2>/dev/null)"
     [ -z "$rows" ] && rows='[]'
   elif [ "$src" = jsonl ]; then
-    local rexpr pexpr; rexpr="$(_sq_jq_range "$range")"
-    if [ -n "$project" ]; then pexpr="((.project_dir//\"\")|ascii_downcase|contains(\"$(printf '%s' "$project" | tr '[:upper:]' '[:lower:]')\"))"; else pexpr="true"; fi
-    rows="$(jq -s --sort-keys "map(select(($rexpr) and ($pexpr))) | group_by(.session_id) | map(max_by(.end_ts))
+    local rexpr f="" t="" projlc=""
+    rexpr="$(_sq_jq_range "$range")"
+    case "$range" in *..*) f="${range%%..*}"; t="${range##*..}" ;; esac
+    [ -n "$project" ] && projlc="$(printf '%s' "$project" | tr '[:upper:]' '[:lower:]')"
+    rows="$(jq -s --arg from "$f" --arg to "$t" --arg proj "$projlc" "
+      def pmatch: (\$proj==\"\" or ((.project_dir//\"\")|ascii_downcase|contains(\$proj)));
+      map(select(($rexpr) and pmatch)) | group_by(.session_id) | map(max_by(.end_ts))
       | map({start:.start_ts, start_local:(.start_ts|strflocaltime(\"%H:%M\")), end:.end_ts, end_local:(.end_ts|strflocaltime(\"%H:%M\")),
-             active_seconds:(.active_seconds // .duration_seconds // 0), project:((.project_dir//\"\")|split(\"/\")|last), branch_issue:((.issue_key // \"—\"))})" "$(_sq_hist)" 2>/dev/null)"
+             active_seconds:(.active_seconds // .duration_seconds // 0), project:((.project_dir//\"\")|split(\"/\")|last),
+             branch_issue:(if (.issue_key//\"\")!=\"\" then .issue_key elif (.branch//\"\")!=\"\" then .branch else \"—\" end)})" "$(_sq_hist)" 2>/dev/null)"
     [ -z "$rows" ] && rows='[]'
   else
     rows='[]'

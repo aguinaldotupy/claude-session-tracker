@@ -52,4 +52,19 @@ st_upsert_session "old" "/p/a" "/p/a" "main" "" 1000 1100 50 50 0 "other" 1101
 assert_eq "history today excludes old" "2" "$(bash "$SQ" history --range today --project a | jq -r .count)"
 assert_eq "history 30d also excludes 1970" "2" "$(bash "$SQ" history --range 30d --project a | jq -r .count)"
 
+# --- jsonl-fallback history (Fix 2 + injection guard) ---
+HJ2="$HOME/.claude/session-env/history.jsonl"
+cat > "$HJ2" <<JSON
+{"session_id":"hj1","project_dir":"/p/bel","active_seconds":30,"duration_seconds":30,"idle_seconds":0,"start_ts":$TODAY,"end_ts":$TODAY,"issue_key":"","reason":"other"}
+{"session_id":"hj2","project_dir":"/p/bel","active_seconds":40,"duration_seconds":40,"idle_seconds":0,"start_ts":$TODAY,"end_ts":$TODAY,"issue_key":"BEL-9","reason":"other"}
+JSON
+assert_eq "jsonl source" "jsonl" "$(bash "$SQ" history --range today | jq -r .source)"
+assert_eq "jsonl empty issue_key renders dash" "—" "$(bash "$SQ" history --range today | jq -r '.rows[]|select(.active_seconds==30).branch_issue')"
+assert_eq "jsonl issue_key shown" "BEL-9" "$(bash "$SQ" history --range today | jq -r '.rows[]|select(.active_seconds==40).branch_issue')"
+# --project injection must NOT bypass the filter (both rows are /p/bel; zzz should match none)
+assert_eq "jsonl project filter not bypassable" "0" "$(bash "$SQ" history --range today --project 'zzz") or true or ("' | jq -r .count)"
+# FROM..TO injection must NOT bypass (narrow future range → 0)
+assert_eq "jsonl range FROM..TO not bypassable" "0" "$(bash "$SQ" history --range '2999-01-01" or true or "..2999-01-02' | jq -r .count)"
+rm -f "$HJ2"
+
 finish
