@@ -22,6 +22,7 @@ if [ -f "$DB_LIB" ]; then
   . "$DB_LIB"
   st_db_init 2>/dev/null || true
   st_import_history 2>/dev/null || true
+  st_backfill_worktrees 2>/dev/null || true
 fi
 
 # Deploy the canonical active-time awk to a stable, plugin-independent path so

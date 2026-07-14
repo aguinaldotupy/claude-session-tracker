@@ -76,4 +76,20 @@ assert_eq "bulk import returns 0" "0" "$rc"
 assert_eq "all 500 rows imported (no partial cutoff)" "500" "$(one "SELECT COUNT(*) FROM sessions WHERE session_id LIKE 'bulk-%';")"
 assert_eq "bulk file renamed after full import" "no" "$([ -f "$SE3/history.jsonl" ] && echo yes || echo no)"
 
+# v3.0.2: default-layout worktree sessions collapse under the repo root at migration.
+printf '%s\n' \
+  '{"session_id":"wt-main","project_dir":"/r/proj","active_seconds":10,"duration_seconds":10,"idle_seconds":0,"start_ts":1,"end_ts":11,"issue_key":"","reason":"other"}' \
+  '{"session_id":"wt-a","project_dir":"/r/proj/.claude/worktrees/funny-euler-abc","active_seconds":20,"duration_seconds":20,"idle_seconds":0,"start_ts":2,"end_ts":22,"issue_key":"","reason":"other"}' \
+  '{"session_id":"wt-b","project_dir":"/r/proj/.claude/worktrees/brave-hertz-def","active_seconds":30,"duration_seconds":30,"idle_seconds":0,"start_ts":3,"end_ts":33,"issue_key":"","reason":"other"}' \
+  > "$SE3/history.jsonl"
+st_import_history
+assert_eq "worktrees collapse to one project" "1" "$(one "SELECT COUNT(*) FROM projects WHERE project_root='/r/proj';")"
+assert_eq "all 3 sessions under repo root" "3" "$(one "SELECT COUNT(*) FROM sessions s JOIN projects p ON p.id=s.project_id WHERE p.project_root='/r/proj';")"
+assert_eq "project_dir keeps full worktree path" "/r/proj/.claude/worktrees/funny-euler-abc" "$(one "SELECT project_dir FROM sessions WHERE session_id='wt-a';")"
+assert_eq "no hash-name project rows created" "0" "$(one "SELECT COUNT(*) FROM projects WHERE project_root LIKE '%/.claude/worktrees/%';")"
+# a CUSTOM worktree path (not the CC default marker) is NOT collapsed — falls back to project_dir
+printf '{"session_id":"wt-custom","project_dir":"/tmp/mywt/feature","active_seconds":5,"duration_seconds":5,"idle_seconds":0,"start_ts":9,"end_ts":14,"issue_key":"","reason":"other"}\n' > "$SE3/history.jsonl"
+st_import_history
+assert_eq "custom worktree path not collapsed" "/tmp/mywt/feature" "$(one "SELECT p.project_root FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.session_id='wt-custom';")"
+
 finish

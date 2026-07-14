@@ -94,3 +94,39 @@ st_import_events() {
     printf 'COMMIT;\n'
   } | sqlite3 "$(st_db_path)" 2>/dev/null
 }
+
+# st_backfill_worktrees — one-time cleanup for DBs migrated before worktree
+# collapsing existed: regroup already-imported sessions whose project_dir is a
+# default-layout Claude Code worktree (<repo>/.claude/worktrees/<name>) under the
+# canonical repo root, then drop the orphaned per-worktree project rows. Idempotent
+# and guarded by a meta flag so it runs at most once. Only the exact, Claude-Code-
+# owned `/.claude/worktrees/` marker triggers it — custom worktree paths are left
+# untouched, matching the migration's own heuristic.
+st_backfill_worktrees() {
+  st_has_sqlite || return 1
+  local db; db="$(st_db_path)"
+  [ -f "$db" ] || return 0
+  [ -n "$(sqlite3 "$db" "SELECT value FROM meta WHERE key='worktrees_backfilled';" 2>/dev/null)" ] && return 0
+  local now; now="$(date +%s)"
+  # Distinct collapsed repo roots among worktree sessions (basename computed in
+  # bash — SQLite has no basename()).
+  local roots; roots="$(sqlite3 "$db" "SELECT DISTINCT substr(project_dir,1,instr(project_dir,'/.claude/worktrees/')-1) FROM sessions WHERE project_dir LIKE '%/.claude/worktrees/%';" 2>/dev/null)"
+  {
+    printf 'BEGIN;\n'
+    local root name e_root e_name
+    while IFS= read -r root; do
+      [ -z "$root" ] && continue
+      name="${root##*/}"
+      e_root="$(st_sql_escape "$root")"; e_name="$(st_sql_escape "$name")"
+      printf "INSERT INTO projects(project_root,name,first_seen_ts,last_seen_ts) VALUES('%s','%s',%s,%s) ON CONFLICT(project_root) DO UPDATE SET last_seen_ts=%s;\n" "$e_root" "$e_name" "$now" "$now" "$now"
+    done <<EOF
+$roots
+EOF
+    # Re-link every default-layout worktree session to its collapsed repo root.
+    printf "UPDATE sessions SET project_id=(SELECT id FROM projects WHERE project_root=substr(project_dir,1,instr(project_dir,'/.claude/worktrees/')-1)) WHERE project_dir LIKE '%%/.claude/worktrees/%%';\n"
+    # Drop project rows left with no sessions (the old per-worktree hash names).
+    printf "DELETE FROM projects WHERE id NOT IN (SELECT project_id FROM sessions WHERE project_id IS NOT NULL);\n"
+    printf "INSERT INTO meta(key,value) VALUES('worktrees_backfilled','%s') ON CONFLICT(key) DO UPDATE SET value='%s';\n" "$now" "$now"
+    printf 'COMMIT;\n'
+  } | sqlite3 "$db" 2>/dev/null
+}

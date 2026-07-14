@@ -95,4 +95,22 @@ printf 'P 4000\nS 4100\n' > "$TMP/null.log"
 st_import_events "sNull" "$TMP/null.log"
 assert_eq "no-tool kind stores NULL" "2" "$(one "SELECT COUNT(*) FROM events WHERE session_id='sNull' AND tool IS NULL;")"
 
+# --- st_backfill_worktrees (v3.0.2): fix DBs migrated before worktree collapsing ---
+# simulate the OLD fragmented state: project_root == project_dir == worktree path
+st_upsert_session "bf-main" "/r/app"                              "/r/app"                              "" "" 5000 5010 10 10 0 "other" 5011
+st_upsert_session "bf-w1"   "/r/app/.claude/worktrees/happy-x"    "/r/app/.claude/worktrees/happy-x"    "" "" 5000 5020 20 20 0 "other" 5021
+st_upsert_session "bf-w2"   "/r/app/.claude/worktrees/silly-y"    "/r/app/.claude/worktrees/silly-y"    "" "" 5000 5030 30 30 0 "other" 5031
+assert_eq "before backfill: 3 fragmented projects" "3" "$(one "SELECT COUNT(*) FROM projects WHERE project_root LIKE '/r/app%';")"
+
+st_backfill_worktrees
+assert_eq "backfill: one /r/app project" "1" "$(one "SELECT COUNT(*) FROM projects WHERE project_root='/r/app';")"
+assert_eq "backfill: all 3 sessions regrouped" "3" "$(one "SELECT COUNT(*) FROM sessions s JOIN projects p ON p.id=s.project_id WHERE p.project_root='/r/app';")"
+assert_eq "backfill: orphan worktree projects removed" "0" "$(one "SELECT COUNT(*) FROM projects WHERE project_root LIKE '/r/app/.claude/worktrees/%';")"
+assert_eq "backfill: worktree session keeps full project_dir" "/r/app/.claude/worktrees/happy-x" "$(one "SELECT project_dir FROM sessions WHERE session_id='bf-w1';")"
+
+# idempotent: a second run (meta flag set) is a no-op and does not error
+st_backfill_worktrees; rc=$?
+assert_eq "backfill idempotent (rc 0)" "0" "$rc"
+assert_eq "backfill still one /r/app project" "1" "$(one "SELECT COUNT(*) FROM projects WHERE project_root='/r/app';")"
+
 finish
