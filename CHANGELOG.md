@@ -5,6 +5,24 @@ All notable changes to this plugin are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.2] - 2026-07-14
+
+### Changed
+- Migration now groups a repo's Claude Code worktrees under one project. Rows
+  whose `project_dir` is a default-layout worktree (`<repo>/.claude/worktrees/
+  <name>`) get `project_root = <repo>`, so all worktrees of a repo aggregate as
+  a single project instead of dozens of hash-named ones. The exact,
+  Claude-Code-owned `/.claude/worktrees/` marker gates this — custom worktree
+  paths are left as-is (fall back to `project_dir`). The full worktree path is
+  still kept in `project_dir` as session detail. (New sessions already grouped
+  correctly via `git rev-parse --git-common-dir`; this aligns migrated history.)
+
+### Added
+- One-time, idempotent backfill (`st_backfill_worktrees`, run at SessionStart)
+  that regroups already-migrated worktree sessions under their repo root and
+  removes the orphaned per-worktree project rows — so databases created by
+  v3.0.0/v3.0.1 get the same grouping without re-migrating.
+
 ## [3.0.1] - 2026-07-13
 
 ### Fixed
@@ -136,6 +154,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: `SessionStart` hook + `session-status` skill + optional
   statusline snippet for live elapsed time.
 
+[3.0.2]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v3.0.1...v3.0.2
 [3.0.1]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v2.6.0...v3.0.0
 [2.6.0]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v2.5.0...v2.6.0
