@@ -60,9 +60,12 @@ For `/session-status`. Bundles the live session (active/elapsed via
 For `/session-history` (table + total).
 ```json
 { "source":"sqlite", "total_active_seconds":10860, "count":2,
-  "rows":[ {"start":1780,"end":1795,"active_seconds":5580,"project":"bel","branch_issue":"BEL-12"} ] }
+  "rows":[ {"start":1780,"start_local":"09:12","end":1795,"end_local":"10:45",
+            "active_seconds":5580,"project":"bel","branch_issue":"BEL-12"} ] }
 ```
-`branch_issue` = `COALESCE(NULLIF(issue_key,''), NULLIF(branch,''), '—')`.
+Each row carries raw epochs (`start`/`end`) and portable preformatted local
+`HH:MM` (`start_local`/`end_local`, via `sqlite strftime` / `jq strflocaltime` —
+see §8). `branch_issue` = `COALESCE(NULLIF(issue_key,''), NULLIF(branch,''), '—')`.
 Project filter matches `projects.project_root` OR `sessions.project_dir`
 (substring, case-insensitive).
 
@@ -72,11 +75,13 @@ of the skill), sourcing events from the `events` table when present, else the
 live `events.log`.
 ```json
 { "source":"sqlite",
-  "intervals":[ {"prompt":1780,"stop":1795,"work_seconds":1082,"api_error":false,
+  "intervals":[ {"prompt":1780,"prompt_local":"09:13","stop":1795,"stop_local":"09:31",
+                 "work_seconds":1082,"api_error":false,
                  "tools":[{"tool":"Read","seconds":12,"failed":false},
                           {"tool":"Bash","seconds":242,"failed":true}]} ] }
 ```
-`failed` reflects a `DF` mark; `api_error` reflects an `SF` mark.
+`failed` reflects a `DF` mark; `api_error` reflects an `SF` mark. `*_local` are
+portable preformatted `HH:MM` (see §8).
 
 ### 3.4 `session-query worklog [--range ...] [--project ...]`
 For `/worklog` (grouping only; MCP posting stays in the command).
@@ -171,7 +176,38 @@ automatically.
 - CHANGELOG `[Unreleased]`: Changed — read path consolidated into the
   `session-query` CLI; skills now call it instead of embedding SQL/awk.
 
-## 8. Edge cases
+## 8. Portability (multi-OS)
+
+The plugin is bash + POSIX tools, so `session-query` must run wherever the rest
+of the plugin does:
+
+- **Supported:** macOS (darwin), any Linux (Arch, Debian, …), and Windows **via
+  WSL or Git Bash**. **Not** native Windows (cmd/PowerShell) — the whole plugin
+  is bash (`#!/usr/bin/env bash`, uses `<<<`, `< <()`, `${x##}`); this is already
+  true today and unchanged by this work.
+- **Hard deps everywhere:** `bash` (real bash, ≥3.2), `jq`, and coreutils (`awk`,
+  `sed`, `grep`, `mkdir`, `date`). `jq` is not preinstalled on any OS — it is a
+  documented requirement.
+- **Soft dep:** `sqlite3` (Debian `sqlite3`, Arch `sqlite`, macOS built-in) —
+  absence falls back to the deduped JSONL path (`source:"jsonl"`).
+- **Optional:** `flock` (Linux only; macOS/Git-Bash lack it → guarded no-op).
+
+**Rules the CLI must follow to stay portable (BSD ↔ GNU differences):**
+1. **No `date -r` / `date -d`.** The only `date` call is `date +%s` (universal).
+   All human times are formatted via `sqlite3 strftime(..., 'unixepoch',
+   'localtime')` on the SQLite path and `jq strflocaltime` on the JSONL fallback
+   — both portable. JSON therefore carries raw epochs **plus** preformatted
+   local strings, so the agent never does timezone math and no `date`
+   formatting runs. (E.g. `history` rows gain `start_local`/`end_local` "HH:MM".)
+2. **`awk` stays one-true-awk safe** — arrays only, no `strftime`/`gensub`/
+   `asort`/`systime`. The timeline awk moving into the CLI keeps this constraint
+   (it already holds).
+3. **No `readlink -f` / `realpath`** — use `cd … && pwd` / `pwd -P`.
+4. **`sed` uses only basic substitution** (`st_sql_escape`'s `s/'/''/g`), which
+   is identical on BSD and GNU sed.
+5. **`flock` guarded** (`command -v flock` / `2>/dev/null || true`).
+
+## 9. Edge cases
 
 - `status` with no current `events.log` (session just started) → `live` zeros,
   `today` still populated.
