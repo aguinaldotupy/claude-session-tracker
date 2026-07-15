@@ -160,12 +160,51 @@ sq_timeline() {
   jq -n --arg source "$src" --argjson intervals "$arr" '{source:$source, intervals:$intervals}'
 }
 
+# Group finished sessions by issue_key; sessions with no issue_key aggregate into
+# `untagged`. Same range/project filters as history.
+sq_worklog() {
+  local range="today" project="" src by untag
+  while [ $# -gt 0 ]; do case "$1" in --range) range="$2"; shift 2 ;; --project) project="$2"; shift 2 ;; *) shift ;; esac; done
+  src="$(_sq_source)"
+  if [ "$src" = sqlite ]; then
+    local where; where="$(_sq_sql_where "$range")"
+    local pfilter="1"
+    if [ -n "$project" ]; then local ep; ep="$(st_sql_escape "$project")"; pfilter="(p.project_root LIKE '%$ep%' OR s.project_dir LIKE '%$ep%')"; fi
+    by="$(sqlite3 -json "$(st_db_path)" "
+      SELECT s.issue_key AS issue_key, MIN(p.name) AS project, SUM(s.active_seconds) AS active_seconds, COUNT(*) AS sessions
+      FROM sessions s LEFT JOIN projects p ON p.id=s.project_id
+      WHERE $where AND $pfilter AND COALESCE(s.issue_key,'')<>'' GROUP BY s.issue_key ORDER BY active_seconds DESC;" 2>/dev/null)"
+    untag="$(sqlite3 -json "$(st_db_path)" "
+      SELECT COALESCE(SUM(s.active_seconds),0) AS active_seconds, COUNT(*) AS sessions
+      FROM sessions s LEFT JOIN projects p ON p.id=s.project_id
+      WHERE $where AND $pfilter AND COALESCE(s.issue_key,'')='';" 2>/dev/null)"
+  elif [ "$src" = jsonl ]; then
+    local rexpr projlc=""
+    rexpr="$(_sq_jq_range "$range")"
+    [ -n "$project" ] && projlc="$(printf '%s' "$project" | tr '[:upper:]' '[:lower:]')"
+    local base; base="$(jq -s --arg proj "$projlc" "
+      def pmatch: (\$proj==\"\" or ((.project_dir//\"\")|ascii_downcase|contains(\$proj)));
+      map(select(($rexpr) and pmatch)) | group_by(.session_id) | map(max_by(.end_ts))" "$(_sq_hist)" 2>/dev/null)"
+    by="$(printf '%s' "$base" | jq 'map(select((.issue_key//"")!="")) | group_by(.issue_key)
+      | map({issue_key:.[0].issue_key, project:(.[0].project_dir|split("/")|last), active_seconds:(map(.active_seconds//.duration_seconds//0)|add), sessions:length})' 2>/dev/null)"
+    untag="$(printf '%s' "$base" | jq '[ .[] | select((.issue_key//"")=="") ] | {active_seconds:(map(.active_seconds//.duration_seconds//0)|add // 0), sessions:length}' 2>/dev/null)"
+  fi
+  [ -z "$by" ] && by='[]'; printf '%s' "$by" | jq -e . >/dev/null 2>&1 || by='[]'
+  [ -z "$untag" ] && untag='{"active_seconds":0,"sessions":0}'
+  # sqlite3 -json wraps untag in an array; unwrap if needed
+  untag="$(printf '%s' "$untag" | jq 'if type=="array" then .[0] // {active_seconds:0,sessions:0} else . end' 2>/dev/null)"
+  [ -z "$untag" ] && untag='{"active_seconds":0,"sessions":0}'
+  jq -n --arg source "$src" --argjson by "$by" --argjson untagged "$untag" \
+    '{source:$source, by_issue:$by, untagged:$untagged}'
+}
+
 _sq_main() {
   local cmd="${1:-}"; shift 2>/dev/null || true
   case "$cmd" in
     status)   sq_status "$@" ;;
     history)  sq_history "$@" ;;
     timeline) sq_timeline "$@" ;;
+    worklog)  sq_worklog "$@" ;;
     *)        jq -n --arg source none '{source:$source,error:"unknown subcommand"}' ;;
   esac
 }

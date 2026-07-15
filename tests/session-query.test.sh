@@ -85,4 +85,13 @@ oute="$(bash "$SQ" timeline nope-xyz)"
 assert_eq "timeline unknown empty" "0" "$(printf '%s' "$oute" | jq -r '.intervals|length')"
 assert_eq "timeline unknown valid json" "0" "$(printf '%s' "$oute" | jq -e . >/dev/null 2>&1; echo $?)"
 
+# --- worklog ---
+# s1 has issue A-1 (100s); s2 untagged (200s); add s3 with A-1 (50s) today
+st_upsert_session "s3" "/p/a" "/p/a" "main" "A-1" "$TODAY" "$TODAY" 50 50 0 "other" "$TODAY"
+outw="$(bash "$SQ" worklog --range today --project a)"
+assert_eq "worklog valid json" "0" "$(printf '%s' "$outw" | jq -e . >/dev/null 2>&1; echo $?)"
+assert_eq "worklog A-1 total (100+50)" "150" "$(printf '%s' "$outw" | jq -r '.by_issue[]|select(.issue_key=="A-1").active_seconds')"
+assert_eq "worklog A-1 sessions" "2" "$(printf '%s' "$outw" | jq -r '.by_issue[]|select(.issue_key=="A-1").sessions')"
+assert_eq "worklog untagged total (s2)" "200" "$(printf '%s' "$outw" | jq -r '.untagged.active_seconds')"
+
 finish
