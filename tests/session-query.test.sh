@@ -143,4 +143,14 @@ assert_eq "no store → source none" "none" "$(printf '%s' "$gn" | jq -r .source
 assert_eq "no store → count 0" "0" "$(printf '%s' "$gn" | jq -r .count)"
 assert_eq "no store → valid json" "0" "$(printf '%s' "$gn" | jq -e . >/dev/null 2>&1; echo $?)"
 
+# --project filter must catch a worktree session via project_root even when its
+# project_dir lacks the filter substring (the project_root LIKE OR project_dir LIKE predicate).
+rm -f "$HOME/.claude/session-env/history.jsonl"   # ensure sqlite source
+st_db_init   # the (c) guard above removed the DB file; recreate schema before upserting
+st_upsert_session "pfMain" "/p/proj" "/p/proj"      "main" "PROJ-1" "$TODAY" "$TODAY" 10 10 0 "other" "$TODAY"
+st_upsert_session "pfWt"   "/p/proj" "/tmp/wt-xyz"  "feat" "PROJ-2" "$TODAY" "$TODAY" 20 20 0 "other" "$TODAY"
+# '/tmp/wt-xyz' lacks 'proj', so pfWt matches ONLY via project_root='/p/proj' → filter must catch BOTH
+assert_eq "history --project catches worktree via project_root" "2" "$(bash "$SQ" history --range today --project proj | jq -r .count)"
+assert_eq "worklog --project catches worktree via project_root" "2" "$(bash "$SQ" worklog --range today --project proj | jq -r '[.by_issue[].sessions]|add')"
+
 finish
