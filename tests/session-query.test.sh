@@ -153,4 +153,15 @@ st_upsert_session "pfWt"   "/p/proj" "/tmp/wt-xyz"  "feat" "PROJ-2" "$TODAY" "$T
 assert_eq "history --project catches worktree via project_root" "2" "$(bash "$SQ" history --range today --project proj | jq -r .count)"
 assert_eq "worklog --project catches worktree via project_root" "2" "$(bash "$SQ" worklog --range today --project proj | jq -r '[.by_issue[].sessions]|add')"
 
+# status: issue_key falls back to the git branch when no issue-tag file exists
+GITREPO="$TMP/gitproj"; mkdir -p "$GITREPO"
+( cd "$GITREPO" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init && git checkout -q -b feature/ABC-123 ) 2>/dev/null
+SIDG="git-issue-sess"; SDG="$HOME/.claude/session-env/$SIDG"; mkdir -p "$SDG"; echo "1000" > "$SDG/session-tracker"
+outg="$(cd "$GITREPO" && bash "$SQ" status --session "$SIDG")"
+assert_eq "status issue_key from git branch" "ABC-123" "$(printf '%s' "$outg" | jq -r .live.issue_key)"
+# and issue-tag file still WINS over the branch
+echo "TAG-99" > "$SDG/issue-tag"
+outg2="$(cd "$GITREPO" && bash "$SQ" status --session "$SIDG")"
+assert_eq "status issue-tag wins over branch" "TAG-99" "$(printf '%s' "$outg2" | jq -r .live.issue_key)"
+
 finish

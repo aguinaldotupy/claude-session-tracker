@@ -36,6 +36,10 @@ sq_status() {
       live_active="$(_sq_int "$(awk -v grace="${SESSION_IDLE_THRESHOLD_SECONDS:-120}" -v t_end="$now" -f "$awk_lib" "$sdir/events.log" 2>/dev/null)")"
     fi
     [ -f "$sdir/issue-tag" ] && issue="$(head -n1 "$sdir/issue-tag" 2>/dev/null | tr -d '[:space:]')"
+    if [ -z "$issue" ] && command -v git >/dev/null 2>&1; then
+      local br; br="$(git -C "$PWD" branch --show-current 2>/dev/null || true)"
+      [ -n "$br" ] && issue="$(printf '%s\n' "$br" | grep -oE '[A-Z][A-Z0-9_]+-[0-9]+' | head -n1 || true)"
+    fi
   fi
   local tsecs=0 tcount=0
   if [ "$src" = sqlite ]; then

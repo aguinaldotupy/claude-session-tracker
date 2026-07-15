@@ -35,6 +35,8 @@ Convert seconds to `Xh Ym`. If `issue_key` is set, show it. `source:"none"` mean
 
 Compute `idle = live.elapsed_seconds - live.active_seconds` (wall-clock time not counted as active).
 
+"Trabalho hoje" = `today.active_seconds + live.active_seconds` (finished sessions from the store plus the still-open live session, which isn't in the store yet), formatted `Xh Ym`.
+
 Display to user:
 
 ```
