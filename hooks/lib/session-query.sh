@@ -119,11 +119,53 @@ sq_history() {
     '{source:$source, total_active_seconds:$total, count:$count, rows:$rows}'
 }
 
+# Forensic timeline. Events come from the SQLite `events` table when present,
+# else the live events.log. The awk pairs T/D per tool, flags DF (failed) and SF
+# (api_error), and emits one JSON object per line; the shell wraps into intervals.
+sq_timeline() {
+  local sid="${1:-}" src rows
+  src="$(_sq_source)"
+  local ev_src=""
+  if st_has_sqlite && [ -f "$(st_db_path)" ] \
+     && [ "$(sqlite3 "$(st_db_path)" "SELECT COUNT(*) FROM events WHERE session_id='$(st_sql_escape "$sid")';" 2>/dev/null)" -gt 0 ] 2>/dev/null; then
+    ev_src="$(sqlite3 -separator ' ' "$(st_db_path)" "SELECT kind, ts, COALESCE(tool,'') FROM events WHERE session_id='$(st_sql_escape "$sid")' ORDER BY ts;" 2>/dev/null)"
+  elif [ -f "$HOME/.claude/session-env/$sid/events.log" ]; then
+    ev_src="$(cat "$HOME/.claude/session-env/$sid/events.log" 2>/dev/null)"
+  fi
+  rows="$(printf '%s\n' "$ev_src" | awk '
+    function flush(){
+      if(p>0){
+        printf "{\"prompt\":%d,\"stop\":%d,\"work\":%d,\"api_error\":%s,\"tools\":[", p, (laststop>0?laststop:p), ((laststop>0?laststop:p)-p), (err?"true":"false")
+        first=1
+        for(t in dur){ printf "%s{\"tool\":\"%s\",\"seconds\":%d,\"failed\":%s}", (first?"":","), t, dur[t], ((t in failed)?"true":"false"); first=0 }
+        printf "]}\n"
+        for(t in dur) delete dur[t]; for(t in opents) delete opents[t]; for(t in failed) delete failed[t]
+      }
+    }
+    { k=$1; ts=$2+0; tool=$3 }
+    k=="P"  { flush(); p=ts; laststop=0; err=0 }
+    k=="T"  { if(p>0) opents[tool]=ts }
+    k=="D"  { if(p>0 && (tool in opents)){ d=ts-opents[tool]; if(d<0)d=0; dur[tool]+=d; delete opents[tool] } }
+    k=="DF" { if(p>0){ if(tool in opents){ d=ts-opents[tool]; if(d<0)d=0; dur[tool]+=d; delete opents[tool] } failed[tool]=1 } }
+    k=="S"  { laststop=ts }
+    k=="SF" { laststop=ts; err=1 }
+    END { flush() }
+  ' 2>/dev/null)"
+  # rows is newline-delimited JSON objects (may be empty). Assemble + add *_local.
+  local arr; arr="$(printf '%s\n' "$rows" | jq -s '
+    map({prompt:.prompt, prompt_local:(.prompt|strflocaltime("%H:%M")), stop:.stop, stop_local:(.stop|strflocaltime("%H:%M")),
+         work_seconds:.work, api_error:.api_error, tools:.tools})' 2>/dev/null)"
+  [ -z "$arr" ] && arr='[]'
+  printf '%s' "$arr" | jq -e . >/dev/null 2>&1 || arr='[]'
+  jq -n --arg source "$src" --argjson intervals "$arr" '{source:$source, intervals:$intervals}'
+}
+
 _sq_main() {
   local cmd="${1:-}"; shift 2>/dev/null || true
   case "$cmd" in
     status)   sq_status "$@" ;;
     history)  sq_history "$@" ;;
+    timeline) sq_timeline "$@" ;;
     *)        jq -n --arg source none '{source:$source,error:"unknown subcommand"}' ;;
   esac
 }

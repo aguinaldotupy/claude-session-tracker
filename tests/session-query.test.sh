@@ -67,4 +67,22 @@ assert_eq "jsonl project filter not bypassable" "0" "$(bash "$SQ" history --rang
 assert_eq "jsonl range FROM..TO not bypassable" "0" "$(bash "$SQ" history --range '2999-01-01" or true or "..2999-01-02' | jq -r .count)"
 rm -f "$HJ2"
 
+# --- timeline ---
+# build events for s1 directly in the events table
+sqlite3 "$(st_db_path)" "DELETE FROM events WHERE session_id='s1';
+  INSERT INTO events(session_id,ts,kind,tool) VALUES
+   ('s1',2000,'P',NULL),('s1',2005,'T','Read'),('s1',2017,'D','Read'),
+   ('s1',2020,'T','Bash'),('s1',2262,'DF','Bash'),('s1',2400,'SF',NULL);"
+outt="$(bash "$SQ" timeline s1)"
+assert_eq "timeline valid json" "0" "$(printf '%s' "$outt" | jq -e . >/dev/null 2>&1; echo $?)"
+assert_eq "timeline one interval" "1" "$(printf '%s' "$outt" | jq -r '.intervals|length')"
+assert_eq "timeline api_error (SF)" "true" "$(printf '%s' "$outt" | jq -r '.intervals[0].api_error')"
+assert_eq "timeline Read seconds" "12" "$(printf '%s' "$outt" | jq -r '.intervals[0].tools[]|select(.tool=="Read").seconds')"
+assert_eq "timeline Bash failed (DF)" "true" "$(printf '%s' "$outt" | jq -r '.intervals[0].tools[]|select(.tool=="Bash").failed')"
+
+# unknown session → empty intervals, valid json
+oute="$(bash "$SQ" timeline nope-xyz)"
+assert_eq "timeline unknown empty" "0" "$(printf '%s' "$oute" | jq -r '.intervals|length')"
+assert_eq "timeline unknown valid json" "0" "$(printf '%s' "$oute" | jq -e . >/dev/null 2>&1; echo $?)"
+
 finish
