@@ -179,10 +179,11 @@ sq_worklog() {
       FROM sessions s LEFT JOIN projects p ON p.id=s.project_id
       WHERE $where AND $pfilter AND COALESCE(s.issue_key,'')='';" 2>/dev/null)"
   elif [ "$src" = jsonl ]; then
-    local rexpr projlc=""
+    local rexpr f="" t="" projlc=""
     rexpr="$(_sq_jq_range "$range")"
+    case "$range" in *..*) f="${range%%..*}"; t="${range##*..}" ;; esac
     [ -n "$project" ] && projlc="$(printf '%s' "$project" | tr '[:upper:]' '[:lower:]')"
-    local base; base="$(jq -s --arg proj "$projlc" "
+    local base; base="$(jq -s --arg from "$f" --arg to "$t" --arg proj "$projlc" "
       def pmatch: (\$proj==\"\" or ((.project_dir//\"\")|ascii_downcase|contains(\$proj)));
       map(select(($rexpr) and pmatch)) | group_by(.session_id) | map(max_by(.end_ts))" "$(_sq_hist)" 2>/dev/null)"
     by="$(printf '%s' "$base" | jq 'map(select((.issue_key//"")!="")) | group_by(.issue_key)

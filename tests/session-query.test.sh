@@ -94,4 +94,21 @@ assert_eq "worklog A-1 total (100+50)" "150" "$(printf '%s' "$outw" | jq -r '.by
 assert_eq "worklog A-1 sessions" "2" "$(printf '%s' "$outw" | jq -r '.by_issue[]|select(.issue_key=="A-1").sessions')"
 assert_eq "worklog untagged total (s2)" "200" "$(printf '%s' "$outw" | jq -r '.untagged.active_seconds')"
 
+# --- worklog jsonl-mode (source + FROM..TO + injection) ---
+HJW="$HOME/.claude/session-env/history.jsonl"
+cat > "$HJW" <<JSON
+{"session_id":"w1","project_dir":"/p/bel","active_seconds":60,"duration_seconds":60,"idle_seconds":0,"start_ts":$TODAY,"end_ts":$TODAY,"issue_key":"BEL-7","reason":"other"}
+{"session_id":"w2","project_dir":"/p/bel","active_seconds":90,"duration_seconds":90,"idle_seconds":0,"start_ts":$TODAY,"end_ts":$TODAY,"issue_key":"","reason":"other"}
+JSON
+assert_eq "worklog jsonl source" "jsonl" "$(bash "$SQ" worklog --range today | jq -r .source)"
+assert_eq "worklog jsonl by_issue BEL-7" "60" "$(bash "$SQ" worklog --range today | jq -r '.by_issue[]|select(.issue_key=="BEL-7").active_seconds')"
+assert_eq "worklog jsonl untagged" "90" "$(bash "$SQ" worklog --range today | jq -r '.untagged.active_seconds')"
+# FROM..TO (broad range incl. today) must return the data, not empty (the bug)
+YEAR_AGO="$(date -v-1y +%Y-%m-%d 2>/dev/null || date -d '1 year ago' +%Y-%m-%d)"
+YEAR_AHEAD="$(date -v+1y +%Y-%m-%d 2>/dev/null || date -d '1 year' +%Y-%m-%d)"
+assert_eq "worklog jsonl FROM..TO returns data" "60" "$(bash "$SQ" worklog --range "$YEAR_AGO..$YEAR_AHEAD" | jq -r '.by_issue[]|select(.issue_key=="BEL-7").active_seconds')"
+# injection in --project must not bypass
+assert_eq "worklog jsonl project not bypassable" "0" "$(bash "$SQ" worklog --range today --project 'zzz") or true or ("' | jq -r '.by_issue|length')"
+rm -f "$HJW"
+
 finish
