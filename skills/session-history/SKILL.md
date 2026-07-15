@@ -5,7 +5,7 @@ description: Use when user asks about past sessions, worklog, accumulated hours,
 
 # Session History
 
-Reports aggregated Claude Code session history from the SQLite store written by the `SessionEnd` hook (with a JSON-lines fallback when `sqlite3` is unavailable).
+Reports aggregated Claude Code session history via the `session-query` CLI, which reads the SQLite store written by the `SessionEnd` hook (with a JSON-lines fallback when `sqlite3` is unavailable).
 
 ## Mechanism
 
@@ -17,58 +17,26 @@ The current (still running) session is NOT in the store — only completed sessi
 
 ## Usage
 
-Query the SQLite store with `sqlite3` (falling back to `jq` over the JSONL log when the DB is absent), filter by date and/or project, then render a markdown table. The snippets below show both paths.
+Call `session-query`, then render its JSON. The CLI owns the SQLite-vs-JSONL guard and the SQL/jq queries — no inline SQL needed here.
 
-### Filters
-
-- Date: `today` (default), `yesterday`, `7d`, `30d`, or `YYYY-MM-DD..YYYY-MM-DD`.
-- Project: substring match on `projects.project_root` OR `sessions.project_dir` (case-insensitive) — worktrees of the same repo group under the canonical root.
-
-### Example: "quanto trabalhei hoje"
-
-Prefer SQLite when available — it joins `projects` for the display name and
-produces the `Branch/Issue` column via
-`COALESCE(NULLIF(issue_key,''), NULLIF(branch,''), '—')`. Fall back to the
-JSONL log (deduped to one row per session) when `sqlite3` or the DB is missing:
+### Table + total
 
 ```bash
-DB="$HOME/.claude/session-env/history.db"
-HIST="$HOME/.claude/session-env/history.jsonl"
-today=$(date +%Y-%m-%d)
-if command -v sqlite3 >/dev/null 2>&1 && [ -f "$DB" ] && [ ! -f "$HIST" ]; then
-  sqlite3 -separator $'\t' "$DB" "
-    SELECT strftime('%H:%M', s.start_ts, 'unixepoch','localtime'),
-           strftime('%H:%M', s.end_ts,   'unixepoch','localtime'),
-           s.active_seconds,
-           p.name,
-           COALESCE(NULLIF(s.issue_key,''), NULLIF(s.branch,''), '—')
-    FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
-    WHERE date(s.start_ts,'unixepoch','localtime') = '$today'
-    ORDER BY s.start_ts;"
-else
-  # legacy fallback (deduped): one row per session_id
-  jq -rs --arg today "$today" '
-    map(select((.start_ts|strflocaltime("%Y-%m-%d"))==$today))
-    | group_by(.session_id) | map(max_by(.end_ts))
-    | .[] | [ (.start_ts|strflocaltime("%H:%M")), (.end_ts|strflocaltime("%H:%M")),
-              .active_seconds, (.project_dir|split("/")|last), (.issue_key // "—") ] | @tsv' "$HIST"
-fi
+bash "$HOME/.claude/session-env/session-query.sh" history --range 7d --project bel
 ```
+Filters: `--range today|yesterday|7d|30d|FROM..TO` (default today), `--project <substr>`.
+Returns `{total_active_seconds, count, rows:[{start_local,end_local,active_seconds,project,branch_issue}]}`.
+Render a markdown table `| Data | Início | Fim | Trabalho | Projeto | Branch/Issue |` using `start_local`/`end_local` and `active_seconds`→`Xh Ym`; footer `Total: … em N sessões`.
 
-### Sum total for the day
+### Forensic timeline (single session)
 
 ```bash
-DB="$HOME/.claude/session-env/history.db"
-HIST="$HOME/.claude/session-env/history.jsonl"
-today=$(date +%Y-%m-%d)
-if command -v sqlite3 >/dev/null 2>&1 && [ -f "$DB" ] && [ ! -f "$HIST" ]; then
-  sqlite3 "$DB" "SELECT COALESCE(SUM(active_seconds),0) FROM sessions WHERE date(start_ts,'unixepoch','localtime')='$today';"
-else
-  jq -s --arg today "$today" 'map(select((.start_ts|strflocaltime("%Y-%m-%d"))==$today)) | group_by(.session_id) | map(max_by(.end_ts).active_seconds) | add // 0' "$HIST"
-fi
+bash "$HOME/.claude/session-env/session-query.sh" timeline "$SID"
 ```
+Returns `{intervals:[{prompt_local,stop_local,work_seconds,api_error,tools:[{tool,seconds,failed}]}]}`.
+Render each interval as `HH:MM prompt` / tool durations (append `✗` when `failed`) / `HH:MM stop` (append `— erro de API` when `api_error`). Empty `intervals` → "Sem timeline para a sessão".
 
-Convert the integer seconds to `Xh Ym` for display.
+Only tool *types* and durations are shown — no file paths or command contents (detail level B).
 
 ## Output Format
 
@@ -83,70 +51,7 @@ Render a markdown table and a total, e.g.:
 **Total: 3h 1m em 2 sessões**
 ```
 
-## Forensic timeline (single session)
-
-When the user wants the "filme" of a specific past session, read its events —
-from the `events` table in SQLite when the session was imported there, else
-fall back to the live `events.log` (it persists at
-`~/.claude/session-env/<session_id>/events.log` after the session ends;
-`history.jsonl` carries the `session_id`). Pair `T`/`D` heartbeats per tool
-name to show time spent per tool inside each working interval; `DF` closes the
-bracket like `D` but flags the tool with `✗`, and `SF` ends the interval like
-`S` but marks the stop as an API error. awk does the counting/pairing
-(one-true-awk safe — arrays only, no `strftime`); the shell formats epoch →
-`HH:MM`. Only the event **source** changes between the two branches — the awk
-and the formatting loop below are unchanged either way:
-
-```bash
-SID="$1"                                   # session_id from history.jsonl
-DB="$HOME/.claude/session-env/history.db"
-if command -v sqlite3 >/dev/null 2>&1 && [ -f "$DB" ] \
-   && [ "$(sqlite3 "$DB" "SELECT COUNT(*) FROM events WHERE session_id='$SID';")" -gt 0 ]; then
-  EVENTS_SRC() { sqlite3 -separator ' ' "$DB" "SELECT kind, ts, COALESCE(tool,'') FROM events WHERE session_id='$SID' ORDER BY ts;"; }
-else
-  EV="$HOME/.claude/session-env/$SID/events.log"
-  [ -f "$EV" ] || { echo "Sem timeline para a sessão $SID."; exit 0; }
-  EVENTS_SRC() { cat "$EV"; }
-fi
-
-EVENTS_SRC | awk '
-  function flush(){
-    if(p>0){
-      s=""
-      for(t in dur){
-        m=int(dur[t]/60); sec=dur[t]%60
-        mark=(t in failed)?" ✗":""
-        s=s (s==""?"":", ") t " " m "m" sec "s" mark
-      }
-      printf "WORK %d %d %d %s\n", p, (laststop>0?laststop:p), err, s
-      for(t in dur) delete dur[t]
-      for(t in opents) delete opents[t]
-      for(t in failed) delete failed[t]
-    }
-  }
-  { k=$1; ts=$2+0; tool=$3 }
-  k=="P"  { flush(); p=ts; laststop=0; err=0 }
-  k=="T"  { if(p>0) opents[tool]=ts }
-  k=="D"  { if(p>0 && (tool in opents)){ d=ts-opents[tool]; if(d<0)d=0; dur[tool]+=d; delete opents[tool] } }
-  k=="DF" { if(p>0){ if(tool in opents){ d=ts-opents[tool]; if(d<0)d=0; dur[tool]+=d; delete opents[tool] } failed[tool]=1 } }
-  k=="S"  { laststop=ts }
-  k=="SF" { laststop=ts; err=1 }
-  END { flush() }
-' | while read -r _tag pts sts err summary; do
-  ph=$(date -r "$pts" +%H:%M 2>/dev/null || date -d "@$pts" +%H:%M)
-  sh=$(date -r "$sts" +%H:%M 2>/dev/null || date -d "@$sts" +%H:%M)
-  work=$((sts - pts)); [ "$work" -lt 0 ] && work=0
-  printf '%s  prompt\n' "$ph"
-  [ -n "$summary" ] && printf '       %s\n' "$summary"
-  if [ "$err" = "1" ]; then
-    printf '%s  stop — erro de API (trabalho %dm%02ds)\n' "$sh" "$((work/60))" "$((work%60))"
-  else
-    printf '%s  stop (trabalho %dm%02ds)\n' "$sh" "$((work/60))" "$((work%60))"
-  fi
-done
-```
-
-Renders e.g.:
+Forensic timeline renders e.g.:
 
 ```
 09:13  prompt
@@ -157,14 +62,10 @@ Renders e.g.:
 09:42  stop — erro de API (trabalho 7m10s)
 ```
 
-Only tool *types* and durations are shown — no file paths or command contents
-(detail level B). This timeline awk is unique to `session-history` (it pairs
-`T`/`D`, flags `DF`/`SF` failures); it is unrelated to the active-time library.
-
 ## Edge cases
 
-- Log missing → tell the user: "Sem histórico ainda — complete uma sessão para começar a registrar."
-- Empty after filter → report "Nenhuma sessão encontrada para <filtro>."
-- Very long rows → show `basename` of `project_dir` in the `Projeto` column; keep the full path only if asked.
+- `source == "none"` → tell the user: "Sem histórico ainda — complete uma sessão para começar a registrar."
+- Empty `rows` after filter → report "Nenhuma sessão encontrada para <filtro>."
+- Very long rows → show `basename` of the project path in the `Projeto` column (the CLI already returns the short `project` name); keep the full path only if asked.
 
 To see the live (current) session time, use `/session-tracker:session-status`.

@@ -5,6 +5,16 @@ All notable changes to this plugin are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Read path consolidated into a single tested `session-query` CLI
+  (`hooks/lib/session-query.sh`, deployed to `~/.claude/session-env/`). The
+  `session-status`, `session-history`, and `worklog` skills/commands now call it
+  and render its JSON instead of embedding SQL/awk/jq. Behavior is unchanged;
+  the SQLite-vs-JSONL guard and the forensic-timeline awk now live (and are
+  tested) in one place.
+
 ## [3.0.2] - 2026-07-14
 
 ### Changed

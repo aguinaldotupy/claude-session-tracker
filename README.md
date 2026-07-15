@@ -101,6 +101,8 @@ Each time a session ends, the `SessionEnd` hook records the session (id, start/e
 
 **Migration:** on the first session after upgrading, any existing `history.jsonl` is imported into SQLite automatically and renamed `history.jsonl.imported`. No action needed.
 
+All of this is read through a single `session-query` helper (deployed to `~/.claude/session-env/` on session start) that the `session-status`/`session-history` skills and the `worklog` command call and render — it owns the SQLite-vs-JSON-lines fallback and the query logic in one tested place.
+
 Query it with `/session-tracker:session-history` or ask naturally:
 
 - "quanto trabalhei hoje?"
@@ -190,12 +192,16 @@ claude plugin update session-tracker@aguinaldotupy --scope user
 ## Requirements
 
 - Claude Code >= 2.1.x
-- bash, date, cat, jq (standard on macOS and Linux; install jq if missing)
-- **`sqlite3`** (soft dependency) — the session history is stored in a local
-  SQLite database at `~/.claude/session-env/history.db`. If `sqlite3` is not
-  installed the plugin still works, falling back to a JSON-lines log; install
-  `sqlite3` to get the relational store, correct cross-session totals, and
-  per-project (worktree-aware) grouping. Present by default on macOS.
+- **`bash`** and **`jq`** — required. All read queries (status, history,
+  timeline, worklog) run through the `session-query` helper, which needs both.
+- **`sqlite3`** — recommended, not required. The session history is stored in
+  a local SQLite database at `~/.claude/session-env/history.db`. If `sqlite3`
+  is not installed the plugin still works: `session-query` falls back to a
+  JSON-lines log (`history.jsonl`) for the same reads. Install `sqlite3` to
+  get the relational store, correct cross-session totals, and per-project
+  (worktree-aware) grouping. Present by default on macOS.
+- **Native Windows** is not supported directly — use WSL or Git Bash, since
+  the hooks and `session-query` are POSIX shell/`awk`.
 
 ## License
 
