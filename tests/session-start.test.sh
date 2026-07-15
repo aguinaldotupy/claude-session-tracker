@@ -30,4 +30,11 @@ assert_eq "db created on start" "yes" "$([ -f "$db" ] && echo yes || echo no)"
 assert_eq "history migrated on start" "42" "$(sqlite3 "$db" "SELECT active_seconds FROM sessions WHERE session_id='m1';")"
 assert_eq "history file renamed" "no" "$([ -f "$SE2/history.jsonl" ] && echo yes || echo no)"
 
+# --- deploy of db.sh + session-query.sh for skills ---
+echo '{"session_id":"dep-1","source":"startup"}' | bash "$ROOT/hooks/session-start.sh" >/dev/null
+DEST="$TMP/.claude/session-env"
+assert_eq "db.sh deployed" "yes" "$([ -f "$DEST/db.sh" ] && echo yes || echo no)"
+assert_eq "session-query.sh deployed" "yes" "$([ -f "$DEST/session-query.sh" ] && echo yes || echo no)"
+assert_eq "deployed session-query runs" "0" "$(bash "$DEST/session-query.sh" status --session none | jq -e . >/dev/null 2>&1; echo $?)"
+
 finish
