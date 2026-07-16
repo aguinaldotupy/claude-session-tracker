@@ -5,6 +5,23 @@ All notable changes to this plugin are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Every hook was silently broken in Claude Desktop sessions.** Claude Code
+  hands hook commands to `sh -c` with `${CLAUDE_PLUGIN_ROOT}` expanded
+  unquoted, and the desktop app installs plugins under
+  `~/Library/Application Support/…` — the space word-splits the command, so
+  all 8 hooks died before running (`/bin/sh: /Users/…/Library/Application: is
+  a directory`): no session timestamp, no events, no SQLite rows for any
+  desktop-launched session. Terminal sessions were unaffected (space-free
+  plugin path). Every `hooks.json` command now wraps `${CLAUDE_PLUGIN_ROOT}`
+  in quotes, and the test suite asserts both the quoting and that the
+  SessionStart command line survives a plugin root containing a space.
+- The `session-status` skill and `session-query` resolved the live session id
+  only from `$CLAUDE_SESSION_ID`, which desktop child sessions leave unset.
+  Both now fall back to `$CLAUDE_CODE_SESSION_ID`.
+
 ## [3.1.0] - 2026-07-15
 
 ### Changed

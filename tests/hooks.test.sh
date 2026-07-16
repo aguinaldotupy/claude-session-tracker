@@ -39,4 +39,23 @@ echo '{}' | HOME="$EMPTY_HOME" bash "$ROOT/hooks/pre-tool-use.sh"; rc=$?
 assert_eq "missing session_id exits clean" "0" "$rc"
 assert_eq "missing session_id writes nothing" "no" "$([ -d "$EMPTY_HOME/.claude/session-env" ] && echo yes || echo no)"
 
+# hooks.json: every command must quote ${CLAUDE_PLUGIN_ROOT}. Claude Code passes
+# the command line to `sh -c`; Claude Desktop installs plugins under
+# "~/Library/Application Support/…", and an unquoted root word-splits there,
+# silently breaking every hook in desktop sessions.
+unquoted=$(jq -r '.hooks[][].hooks[].command
+  | select((startswith("\"${CLAUDE_PLUGIN_ROOT}") and endswith("\"")) | not)' \
+  "$ROOT/hooks/hooks.json")
+assert_eq "hooks.json commands quote CLAUDE_PLUGIN_ROOT" "" "$unquoted"
+
+# End-to-end: run the hooks.json command line via `sh -c` (as Claude Code does)
+# with a plugin root containing a space.
+SPACED="$TMP/plugin root with space"; mkdir -p "$SPACED"
+cp -R "$ROOT/hooks" "$SPACED/hooks"
+CMD=$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$ROOT/hooks/hooks.json")
+echo '{"session_id":"spaced-1","source":"startup"}' \
+  | CLAUDE_PLUGIN_ROOT="$SPACED" sh -c "$CMD" >/dev/null 2>&1
+assert_eq "spaced plugin root: session-start still writes timestamp" "yes" \
+  "$([ -f "$HOME/.claude/session-env/spaced-1/session-tracker" ] && echo yes || echo no)"
+
 finish

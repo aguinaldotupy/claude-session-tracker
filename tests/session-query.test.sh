@@ -31,6 +31,13 @@ out="$(bash "$SQ" status --session "$SID")"
 assert_eq "status live active (60+grace120)" "180" "$(printf '%s' "$out" | jq -r .live.active_seconds)"
 assert_eq "status live started_at" "1000" "$(printf '%s' "$out" | jq -r .live.started_at)"
 
+# no --session: falls back to $CLAUDE_SESSION_ID, then $CLAUDE_CODE_SESSION_ID
+# (desktop child sessions only set the latter)
+out="$(CLAUDE_SESSION_ID= CLAUDE_CODE_SESSION_ID="$SID" bash "$SQ" status)"
+assert_eq "sid fallback to CLAUDE_CODE_SESSION_ID" "1000" "$(printf '%s' "$out" | jq -r .live.started_at)"
+out="$(CLAUDE_SESSION_ID="$SID" CLAUDE_CODE_SESSION_ID=other bash "$SQ" status)"
+assert_eq "CLAUDE_SESSION_ID wins over CLAUDE_CODE_SESSION_ID" "1000" "$(printf '%s' "$out" | jq -r .live.started_at)"
+
 # --- history ---
 # s1 has issue A-1; s2 only a branch → branch_issue falls back to branch
 outh="$(bash "$SQ" history --range today --project a)"

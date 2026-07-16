@@ -23,7 +23,7 @@ _sq_int() { case "$1" in ''|*[!0-9]*) echo 0 ;; *) echo "$1" ;; esac; }
 sq_status() {
   local sid="" now sdir start_ts live_elapsed live_active issue src
   while [ $# -gt 0 ]; do case "$1" in --session) sid="$2"; shift 2 ;; *) shift ;; esac; done
-  [ -z "$sid" ] && sid="${CLAUDE_SESSION_ID:-}"
+  [ -z "$sid" ] && sid="${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
   now="$(date +%s)"
   src="$(_sq_source)"
   sdir="$HOME/.claude/session-env/$sid"

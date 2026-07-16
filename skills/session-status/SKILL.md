@@ -25,7 +25,7 @@ attention rather than wall-clock. Wall-clock elapsed is reported as secondary co
 Get the live session and today's total in one call, then render (see Output Format below for the canonical example):
 
 ```bash
-bash "$HOME/.claude/session-env/session-query.sh" status --session "$CLAUDE_SESSION_ID"
+bash "$HOME/.claude/session-env/session-query.sh" status --session "${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
 ```
 
 Returns JSON: `{live:{elapsed_seconds,active_seconds,started_at,issue_key}, today:{active_seconds,sessions}}`.
