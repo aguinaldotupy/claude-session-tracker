@@ -174,6 +174,24 @@ printf 'A-9\n' > "$SE/$SID7/issue-tag"
 : > "$CURL_CAPTURE"
 ( cd "$TMP/repo" && bash "$SYNC" --session "$SID7" ) >/dev/null 2>&1
 assert_eq "cache hit: only the entry POST" "1" "$(wc -l < "$CURL_CAPTURE" | tr -d ' ')"
+assert_eq "project_id on wire (cache hit)" "1" "$(grep -c '\"project_id\":\"p1\"' "$CURL_CAPTURE")"
+
+# ---- resolve failure fallback: GET list, POST create, and the tag
+# equivalent all fail (non-2xx) -> _sl_resolve prints empty for both, entry
+# still posts without project_id/tags rather than failing the sync (ruling
+# under review finding). Fresh project name so cache can't short-circuit;
+# SOLIDTIME_MEMBER_ID stays set in conf throughout.
+SID10="sess-resolve-fail"; mkdir -p "$SE/$SID10"
+printf 'P 7000\nS 7100\n' > "$SE/$SID10/events.log"
+printf 'A-99\n' > "$SE/$SID10/issue-tag"
+: > "$CURL_CAPTURE"; printf '500\n500\n500\n500\n200\n' > "$CURL_CTRL"
+( cd "$TMP" && mkdir -p repo3 && cd repo3 && bash "$SYNC" --session "$SID10" ) >/dev/null 2>&1
+assert_eq "resolve-fail: entry still posts (ledger done)" "0
+done" "$(cat "$SE/$SID10/solidtime-synced")"
+assert_eq "resolve-fail: no project_id on wire" "0" "$(grep -c 'project_id' "$CURL_CAPTURE")"
+assert_eq "resolve-fail: no tags array on wire" "0" "$(grep -c '\"tags\":\[' "$CURL_CAPTURE")"
+assert_eq "resolve-fail: ERROR resolve logged" "2" "$(grep -c 'ERROR resolve' "$LOG")"
+: > "$CURL_CTRL"
 
 # ---- member_id auto-resolve (SOLIDTIME_MEMBER_ID absent from conf) ----
 sed 's/^SOLIDTIME_MEMBER_ID=.*/SOLIDTIME_MEMBER_ID=/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"

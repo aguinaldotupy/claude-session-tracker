@@ -117,9 +117,9 @@ _sl_resolve() {
     # ProjectStoreRequest requires color + is_billable (verified API delta);
     # TagStoreRequest needs name only.
     if [ "$kind" = "projects" ]; then
-      payload="$(jq -n --arg n "$name" --arg c "$_SL_PROJECT_COLOR" '{name:$n, color:$c, is_billable:false}')"
+      payload="$(jq -nc --arg n "$name" --arg c "$_SL_PROJECT_COLOR" '{name:$n, color:$c, is_billable:false}')"
     else
-      payload="$(jq -n --arg n "$name" '{name:$n}')"
+      payload="$(jq -nc --arg n "$name" '{name:$n}')"
     fi
     code="$(curl -sS -o "$bodyf" -w '%{http_code}' -X POST "$url" \
       -H "Authorization: Bearer $SOLIDTIME_TOKEN" -H "Content-Type: application/json" -H "Accept: application/json" \
