@@ -97,6 +97,9 @@ assert_eq "ledger complete" "0
 done" "$(cat "$SE/$SID/solidtime-synced")"
 assert_eq "payload has iso start" "1" "$(grep -c '1970-01-01T00:16:40Z' "$CURL_CAPTURE")"
 assert_eq "auth header sent" "2" "$(grep -c 'Bearer secret-token-123' "$CURL_CAPTURE")"
+assert_eq "member_id on wire" "2" "$(grep -c '\"member_id\":\"member-1\"' "$CURL_CAPTURE")"
+assert_eq "billable false on wire" "2" "$(grep -c '\"billable\":false' "$CURL_CAPTURE")"
+assert_eq "no tag_ids on wire" "0" "$(grep -c 'tag_ids' "$CURL_CAPTURE")"
 
 # done session: re-run posts nothing
 bash "$SYNC" --session "$SID" >/dev/null 2>&1
