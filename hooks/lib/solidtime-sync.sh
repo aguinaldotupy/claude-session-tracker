@@ -120,22 +120,43 @@ fi
 
 _sl_rotate
 
+# Sync watermark: the epoch at which sync first became configured on this host.
+# Discovery never posts sessions that ended before it -- "no backfill of
+# pre-existing history" (design non-goal). Seeded on the first configured run
+# of any kind (--check included, so /sync-setup sets it), never rewritten.
+_SL_SINCE_FILE="$_SL_ENV/solidtime-since"
+_sl_since() {
+  local v=""
+  [ -f "$_SL_SINCE_FILE" ] && v="$(head -n1 "$_SL_SINCE_FILE" 2>/dev/null | tr -d '[:space:]')"
+  case "$v" in
+    ''|*[!0-9]*) v="$(date +%s)"; printf '%s\n' "$v" > "$_SL_SINCE_FILE" 2>/dev/null ;;
+  esac
+  printf '%s' "$v"
+}
+_SL_SINCE="$(_sl_since)"
+
 if [ "$CHECK" = 1 ]; then
   _sl_check
   exit 0
 fi
 
-# mkdir lock (no flock on macOS); stale >10min is broken.
-if ! mkdir "$_SL_LOCK" 2>/dev/null; then
+# mkdir lock (no flock on macOS); stale >10min is broken. An explicit
+# --session run (SessionEnd) waits for a concurrent discovery run instead of
+# skipping: it is the only trigger that force-syncs a resumed session, so a
+# lost run would silently drop that session's new brackets forever.
+_sl_lock_tries=1
+[ -n "$ONLY_SID" ] && _sl_lock_tries=15
+while ! mkdir "$_SL_LOCK" 2>/dev/null; do
+  _sl_lock_tries=$((_sl_lock_tries - 1))
   if [ -n "$(find "$_SL_LOCK" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
     rmdir "$_SL_LOCK" 2>/dev/null || rm -rf "$_SL_LOCK" 2>/dev/null
-    mkdir "$_SL_LOCK" 2>/dev/null || { _sl_log "lock held after stale-break, skipping run"; exit 0; }
     _sl_log "broke stale lock"
-  else
-    _sl_log "lock held, skipping run"
-    exit 0
+    [ "$_sl_lock_tries" -le -5 ] && { _sl_log "lock held, skipping run"; exit 0; }
+    continue
   fi
-fi
+  if [ "$_sl_lock_tries" -le 0 ]; then _sl_log "lock held, skipping run"; exit 0; fi
+  sleep 2
+done
 trap 'rmdir "$_SL_LOCK" 2>/dev/null' EXIT
 
 . "$_SL_ENV/db.sh" 2>/dev/null || true
@@ -258,6 +279,21 @@ _sl_session_project() {
   [ -n "$name" ] && printf '%s' "$name" || basename "${PWD:-unknown}"
 }
 
+# Terminal epoch for bracket computation: the session's recorded end_ts, NOT
+# `now`. A retry days later (instance down, sqlite fallback, lost lock) would
+# otherwise close a session that ended mid-tool-call — its last engagement
+# still open — at the current time and post a multi-day time entry. Falls back
+# to now only when the store has no end_ts (session not yet recorded).
+_sl_session_end_ts() {
+  local sid="$1" ts=""
+  if command -v st_has_sqlite >/dev/null 2>&1 && st_has_sqlite && [ -f "$(st_db_path)" ]; then
+    ts="$(sqlite3 "$(st_db_path)" "SELECT COALESCE(end_ts,'') FROM sessions WHERE session_id='$(st_sql_escape "$sid")';" 2>/dev/null)"
+  elif [ -f "$_SL_ENV/history.jsonl" ]; then
+    ts="$(jq -r --arg s "$sid" 'select(.session_id==$s) | .end_ts' "$_SL_ENV/history.jsonl" 2>/dev/null | tail -n1)"
+  fi
+  case "$ts" in ''|*[!0-9]*) date +%s ;; *) printf '%s' "$ts" ;; esac
+}
+
 # Sync one finished session: post every bracket not yet in the ledger.
 # Args: sid [force] -- force (used only by the explicit --session path) skips
 # the 'done' short-circuit so a session resumed after a prior sync still
@@ -290,7 +326,7 @@ _sl_sync_session() {
   proj="$(_sl_resolve_project "$(_sl_session_project "$sid")")"
   tag=""; [ -n "$issue" ] && tag="$(_sl_resolve_tag "$issue")"
   local now idx=0 start end code
-  now="$(date +%s)"
+  now="$(_sl_session_end_ts "$sid")"
   while read -r start end; do
     [ -z "$start" ] && continue
     if ! grep -qx "$idx" "$ledger" 2>/dev/null; then
@@ -311,11 +347,14 @@ EOF
   return 0
 }
 
+# Sessions eligible for discovery: only those that ended at or after the sync
+# watermark. Without the filter, enabling sync on a host with months of local
+# history would post every one of those sessions to Solidtime on the first run.
 _sl_pending_sids() {
   if command -v st_has_sqlite >/dev/null 2>&1 && st_has_sqlite && [ -f "$(st_db_path)" ]; then
-    sqlite3 "$(st_db_path)" "SELECT session_id FROM sessions ORDER BY end_ts;" 2>/dev/null
+    sqlite3 "$(st_db_path)" "SELECT session_id FROM sessions WHERE end_ts >= $_SL_SINCE ORDER BY end_ts;" 2>/dev/null
   elif [ -f "$_SL_ENV/history.jsonl" ]; then
-    jq -r '.session_id' "$_SL_ENV/history.jsonl" 2>/dev/null | sort -u
+    jq -r --argjson since "$_SL_SINCE" 'select(.end_ts >= $since) | .session_id' "$_SL_ENV/history.jsonl" 2>/dev/null | sort -u
   fi
 }
 

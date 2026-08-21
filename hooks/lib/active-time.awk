@@ -20,6 +20,10 @@ BEGIN { open = -1; last_stop = -1; bstart = -1; active = 0; last_emit_end = 0; i
 
 function emit_bracket(s, e) {
   if (mode == "brackets") {
+    # No engagement was ever opened (log starts with S/SF — e.g. the plugin
+    # was installed mid-response): there is no bracket, and clamping -1 up to
+    # last_emit_end would invent one starting at epoch 0.
+    if (s < 0) return
     if (s < last_emit_end) s = last_emit_end
     if (e > s) {
       printf "%d %d\n", s, e

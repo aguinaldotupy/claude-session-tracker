@@ -54,13 +54,16 @@ EOF
   local sync_conf=false sync_pending=0 sync_err=""
   if [ -f "$HOME/.claude/session-env/solidtime.conf" ] || [ -n "${SOLIDTIME_URL:-}" ]; then
     sync_conf=true
-    local psid
+    # Last 30 days only: this runs on every statusline render, and one grep per
+    # session row would grow without bound over the life of the store.
+    local psid cutoff
     while IFS= read -r psid; do
       [ -z "$psid" ] && continue
       grep -q '^done$' "$HOME/.claude/session-env/$psid/solidtime-synced" 2>/dev/null || sync_pending=$((sync_pending + 1))
     done <<EOF
-$(if [ "$src" = sqlite ]; then sqlite3 "$(st_db_path)" "SELECT session_id FROM sessions;" 2>/dev/null
-  elif [ "$src" = jsonl ]; then jq -r '.session_id' "$(_sq_hist)" 2>/dev/null | sort -u; fi)
+$(cutoff=$((now - 2592000))
+  if [ "$src" = sqlite ]; then sqlite3 "$(st_db_path)" "SELECT session_id FROM sessions WHERE end_ts >= $cutoff;" 2>/dev/null
+  elif [ "$src" = jsonl ]; then jq -r --argjson c "$cutoff" 'select(.end_ts >= $c) | .session_id' "$(_sq_hist)" 2>/dev/null | sort -u; fi)
 EOF
     sync_err="$(grep ' ERROR ' "$HOME/.claude/session-env/solidtime-sync.log" 2>/dev/null | tail -n1)"
   fi
@@ -137,18 +140,19 @@ sq_history() {
     '{source:$source, total_active_seconds:$total, count:$count, rows:$rows}'
 }
 
-# Forensic timeline. Events come from the SQLite `events` table when present,
-# else the live events.log. The awk pairs T/D per tool, flags DF (failed) and SF
-# (api_error), and emits one JSON object per line; the shell wraps into intervals.
+# Forensic timeline. Events come from the live events.log when it exists, else
+# the SQLite `events` table (rows left by versions that still imported the log —
+# those are frozen at their import and go stale once a session is resumed). The
+# awk pairs T/D per tool, flags DF (failed) and SF (api_error), and emits one
+# JSON object per line; the shell wraps into intervals.
 sq_timeline() {
   local sid="${1:-}" src rows
   src="$(_sq_source)"
   local ev_src=""
-  if st_has_sqlite && [ -f "$(st_db_path)" ] \
-     && [ "$(sqlite3 "$(st_db_path)" "SELECT COUNT(*) FROM events WHERE session_id='$(st_sql_escape "$sid")';" 2>/dev/null)" -gt 0 ] 2>/dev/null; then
-    ev_src="$(sqlite3 -separator ' ' "$(st_db_path)" "SELECT kind, ts, COALESCE(tool,'') FROM events WHERE session_id='$(st_sql_escape "$sid")' ORDER BY ts;" 2>/dev/null)"
-  elif [ -f "$HOME/.claude/session-env/$sid/events.log" ]; then
+  if [ -f "$HOME/.claude/session-env/$sid/events.log" ]; then
     ev_src="$(cat "$HOME/.claude/session-env/$sid/events.log" 2>/dev/null)"
+  elif st_has_sqlite && [ -f "$(st_db_path)" ]; then
+    ev_src="$(sqlite3 -separator ' ' "$(st_db_path)" "SELECT kind, ts, COALESCE(tool,'') FROM events WHERE session_id='$(st_sql_escape "$sid")' ORDER BY ts;" 2>/dev/null)"
   fi
   rows="$(printf '%s\n' "$ev_src" | awk '
     function flush(){

@@ -272,6 +272,10 @@ mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
 # ---- discovery: ended sessions without 'done' get synced ----
 . "$DIR/../hooks/lib/db.sh"
 st_db_init
+# Watermark = when sync became configured; discovery ignores anything that
+# ended before it (no backfill of pre-existing history). Pin it low enough
+# that the fixtures below qualify.
+printf '99\n' > "$SE/solidtime-since"
 st_upsert_session "disc-1" "/p/x" "/p/x" "" "" 100 200 100 80 20 "exit" 201
 st_upsert_session "disc-2" "/p/x" "/p/x" "" "" 100 300 200 90 110 "exit" 301
 mkdir -p "$SE/disc-1" "$SE/disc-2"
@@ -292,6 +296,27 @@ bash "$SYNC" >/dev/null 2>&1
 assert_eq "no-events session marked done" "1" "$(grep -cx done "$SE/disc-noevents/solidtime-synced")"
 assert_eq "no-events session: no HTTP call" "0" "$(grep -c 'disc-noevents' "$CURL_CAPTURE")"
 assert_eq "no-events session: logged" "1" "$(grep -c 'session disc-noevents: no events.log, marking done' "$LOG")"
+
+# ---- brackets end at the session's recorded end_ts, not `now`: a session that
+# ended mid-tool-call (no trailing S) and is only synced later must not have its
+# final bracket stretched to the retry time ----
+st_upsert_session "disc-open" "/p/x" "/p/x" "" "" 1000 1200 200 200 0 "exit" 1201
+mkdir -p "$SE/disc-open"
+printf 'P 1000\nT 1100 Bash\n' > "$SE/disc-open/events.log"
+: > "$CURL_CAPTURE"
+bash "$SYNC" >/dev/null 2>&1
+assert_eq "open bracket starts at first prompt" "1" "$(grep -c '1970-01-01T00:16:40Z' "$CURL_CAPTURE")"
+assert_eq "open bracket ends at recorded end_ts" "1" "$(grep -c '1970-01-01T00:20:00Z' "$CURL_CAPTURE")"
+
+# ---- no backfill: a session that ended before the sync watermark is never
+# discovered (enabling sync must not dump months of local history) ----
+st_upsert_session "disc-old" "/p/x" "/p/x" "" "" 10 50 40 40 0 "exit" 51
+mkdir -p "$SE/disc-old"
+printf 'P 10\nS 50\n' > "$SE/disc-old/events.log"
+: > "$CURL_CAPTURE"
+bash "$SYNC" >/dev/null 2>&1
+assert_eq "pre-watermark session: no HTTP call" "0" "$(wc -l < "$CURL_CAPTURE" | tr -d ' ')"
+assert_eq "pre-watermark session: no ledger" "0" "$([ -f "$SE/disc-old/solidtime-synced" ] && echo 1 || echo 0)"
 
 # ---- --check: real credential verification (GET memberships), no session sync ----
 # curl shim already returns a memberships body containing org "org-1" for

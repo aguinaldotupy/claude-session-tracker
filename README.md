@@ -166,7 +166,7 @@ which walks you through creating an API token in the Solidtime UI, finding the o
 
 Headless or ephemeral environments (CI, cloud, sandbox VMs) where writing that file is awkward can instead set `SOLIDTIME_URL`, `SOLIDTIME_TOKEN`, and `SOLIDTIME_ORG_ID` as environment variables. The file, when present, always takes precedence over the environment.
 
-Sync is background and local-first: hooks never wait on the network, and a Solidtime instance that's down for days loses nothing — every finished session stays in the local store until it syncs. It runs on three triggers: automatically in the background right after a session ends, again on the next `SessionStart` to retry anything still pending, and on demand via `/session-tracker:sync`. The first sync after configuring also picks up any sessions completed before setup — all pending history in the local store syncs, not just new sessions. Trigger a sync manually, or check sync health (pending count, last error), with:
+Sync is background and local-first: hooks never wait on the network, and a Solidtime instance that's down for days loses nothing — every finished session stays in the local store until it syncs. It runs on three triggers: automatically in the background right after a session ends, again on the next `SessionStart` to retry anything still pending, and on demand via `/session-tracker:sync`. Only sessions that end after you configure sync are sent — history recorded before setup stays local, so turning sync on never floods your Solidtime account with past work. Trigger a sync manually, or check sync health (pending count, last error), with:
 
 ```
 /session-tracker:sync

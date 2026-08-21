@@ -74,6 +74,11 @@ assert_eq "brackets sum equals scalar" "$scalar_out" "$sum_out"
 # Out-of-order input: brackets clamped to chronological non-overlapping pairs
 assert_eq "brackets: out-of-order" "1000 1060;1060 1070;" "$(printf 'P 1000\nS 1060\nP 1050\nS 1070\n' | brackets 120 1070)"
 
+# Log starting with a Stop (plugin installed mid-response): no engagement was
+# ever opened, so no bracket — never one clamped back to epoch 0.
+assert_eq "brackets: leading stop" "" "$(printf 'S 1060\n' | brackets 120 5000)"
+assert_eq "brackets: leading stop then prompt" "1100 1200;" "$(printf 'S 1060\nP 1100\nS 1200\n' | brackets 120 1200)"
+
 # Zero-width bracket after clamp is dropped; only valid bracket emitted
 assert_eq "brackets: zero-width" "1000 1005;" "$(printf 'P 1000\nS 1000\nP 1000\nS 1005\n' | brackets 120 1005)"
 
