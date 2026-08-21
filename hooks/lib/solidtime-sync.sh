@@ -11,12 +11,17 @@ _SL_LOG="$_SL_ENV/solidtime-sync.log"
 _SL_LOCK="$_SL_ENV/solidtime-sync.lock"
 _SL_CACHE="$_SL_ENV/solidtime-cache.json"
 
-# --- Solidtime API surface (verified/corrected in the API-notes task; keep
-# every path and field name in this block and the _sl_api_* helpers only) ---
+# --- Solidtime API surface (verified against https://api-docs.solidtime.io/
+# api-docs.json on 2026-08-21; see docs/superpowers/specs/
+# 2026-08-21-solidtime-api-notes.md. Keep every path and field name in this
+# block and the _sl_api_* helpers only) ---
 _SL_API_ENTRIES="api/v1/organizations/%s/time-entries"
 _SL_API_PROJECTS="api/v1/organizations/%s/projects"
 _SL_API_TAGS="api/v1/organizations/%s/tags"
 _SL_API_ME="api/v1/users/me"
+# member_id is required on time-entry create; this is how to discover it
+# for a given org (see notes file "member_id" section).
+_SL_API_MEMBERSHIPS="api/v1/users/me/memberships"
 
 VERBOSE=0
 ONLY_SID=""
