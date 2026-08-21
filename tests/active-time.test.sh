@@ -48,4 +48,27 @@ assert_eq "SF closes like S" "60" "$(printf 'P 1000\nSF 1060\n' | active 120 106
 # SF then parked: only grace credited after the failed stop (60 + 120)
 assert_eq "SF then parked credits grace" "180" "$(printf 'P 1000\nSF 1060\n' | active 120 5000)"
 
+brackets() { awk -v grace="$1" -v t_end="$2" -v mode=brackets -f "$AWK" | tr '\n' ';'; }
+
+# One interval, parked: single bracket includes the grace tail
+assert_eq "brackets: parked" "1000 1180;" "$(printf 'P 1000\nS 1060\n' | brackets 120 5000)"
+
+# Short gap: first bracket ends where the next begins
+assert_eq "brackets: short gap" "1000 1100;1100 1160;" "$(printf 'P 1000\nS 1060\nP 1100\nS 1160\n' | brackets 120 1160)"
+
+# Long gap capped: first bracket ends at stop+grace
+assert_eq "brackets: capped gap" "1000 1180;1300 1360;" "$(printf 'P 1000\nS 1060\nP 1300\nS 1360\n' | brackets 120 1360)"
+
+# Open bracket runs to t_end
+assert_eq "brackets: live open" "1000 1100;" "$(printf 'P 1000\n' | brackets 120 1100)"
+
+# Empty log: no output
+assert_eq "brackets: empty" "" "$(printf '' | brackets 120 1000)"
+
+# Sum of brackets equals scalar output on a mixed scenario
+mixed='P 1000\nT 1005 Edit\nD 1040 Edit\nS 1060\nP 1300\nSF 1360\n'
+scalar_out="$(printf "$mixed" | active 120 5000)"
+sum_out="$(printf "$mixed" | awk -v grace=120 -v t_end=5000 -v mode=brackets -f "$AWK" | awk '{s+=$2-$1} END{printf "%d", s+0}')"
+assert_eq "brackets sum equals scalar" "$scalar_out" "$sum_out"
+
 finish
