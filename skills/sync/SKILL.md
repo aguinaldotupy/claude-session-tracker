@@ -9,7 +9,7 @@ Runs the Solidtime sync client and reports sync health — same behavior as `/se
 
 ## Mechanism
 
-`~/.claude/session-env/solidtime-sync.sh` (deployed by the `SessionStart` hook) posts each finished session's active-time brackets to a Solidtime instance as time entries — see `docs/superpowers/specs/2026-08-21-solidtime-sync-design.md`. It's local-first: nothing is lost if the instance is unreachable, and the next `SessionStart` or manual run retries. Configuration lives in `~/.claude/session-env/solidtime.conf` (`chmod 600`); when it's missing, sync is silently inactive.
+`~/.claude/session-env/solidtime-sync.sh` (deployed by the `SessionStart` hook) posts each finished session's active-time brackets to a Solidtime instance as time entries — see `docs/superpowers/specs/2026-08-21-solidtime-sync-design.md`. It runs on three triggers: automatically in the background right when a session ends, again on the next `SessionStart` to retry anything still pending, and on demand via `/session-tracker:sync` or this skill. It's local-first: nothing is lost if the instance is unreachable — the session stays in the local store until one of those triggers succeeds. Configuration lives in `~/.claude/session-env/solidtime.conf` (`chmod 600`); when it's missing, sync is silently inactive.
 
 ## Usage
 
@@ -38,7 +38,7 @@ Report: sessions synced just now, the `pending` count remaining, and `last_error
 
 - **401** — the API token is invalid or expired. Re-run `/session-tracker:sync-setup` to save a fresh token.
 - **404** — the instance URL or organization id is wrong. Re-run `/session-tracker:sync-setup` with the correct values.
-- **Timeout / connection failure** (no HTTP status, or a network error) — the Solidtime instance is unreachable. Nothing is lost: brackets stay in the local ledger and sync automatically on the next session start or the next `/session-tracker:sync`.
+- **Timeout / connection failure** (no HTTP status, or a network error) — the Solidtime instance is unreachable. Nothing is lost: brackets stay in the local ledger and sync automatically the next time a session ends, on the next session start, or on the next `/session-tracker:sync`.
 - Any other status — show the raw log line; it carries a truncated response body that usually explains the failure.
 
 ## Edge cases

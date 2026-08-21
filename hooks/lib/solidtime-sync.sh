@@ -28,10 +28,12 @@ _SL_PROJECT_COLOR="#2563eb"
 
 VERBOSE=0
 ONLY_SID=""
+CHECK=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --session) ONLY_SID="${2:-}"; if [ $# -ge 2 ]; then shift 2; else shift; fi ;;
     --verbose) VERBOSE=1; shift ;;
+    --check) CHECK=1; shift ;;
     *) shift ;;
   esac
 done
@@ -56,6 +58,30 @@ _sl_rotate() {
   fi
 }
 
+# --check: one real API call (GET /users/me) to prove URL/token/org reach a
+# live instance -- unlike a no-op sync run (0 ended sessions => 0 HTTP calls),
+# this always hits the network. Read-only, so it skips the sync lock.
+_sl_check() {
+  local url bodyf code
+  url="${SOLIDTIME_URL%/}/$_SL_API_ME"
+  bodyf="$(mktemp "${TMPDIR:-/tmp}/slbody.XXXXXX")"
+  code="$(curl -sS -o "$bodyf" -w '%{http_code}' \
+    -H "Authorization: Bearer $SOLIDTIME_TOKEN" -H "Accept: application/json" \
+    --connect-timeout 5 --max-time 15 "$url" 2>/dev/null)"
+  case "$code" in
+    2*) _sl_log "check: HTTP $code" ;;
+    *)  _sl_log "ERROR check: HTTP $code $(head -c 200 "$bodyf" 2>/dev/null | tr -d '\n')" ;;
+  esac
+  rm -f "$bodyf"
+  if [ "$VERBOSE" = 1 ]; then
+    case "$code" in
+      2*) printf 'credentials OK\n' ;;
+      *)  printf 'credentials FAILED: HTTP %s\n' "$code" ;;
+    esac
+  fi
+  return 0
+}
+
 # No config → silently inactive. This is the supported "feature off" state.
 [ -f "$_SL_CONF" ] || exit 0
 [ -r "$_SL_CONF" ] || exit 0
@@ -67,6 +93,11 @@ if [ -z "${SOLIDTIME_URL:-}" ] || [ -z "${SOLIDTIME_TOKEN:-}" ] || [ -z "${SOLID
 fi
 
 _sl_rotate
+
+if [ "$CHECK" = 1 ]; then
+  _sl_check
+  exit 0
+fi
 
 # mkdir lock (no flock on macOS); stale >10min is broken.
 if ! mkdir "$_SL_LOCK" 2>/dev/null; then

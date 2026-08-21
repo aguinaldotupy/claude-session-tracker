@@ -164,7 +164,7 @@ Set it up with:
 
 which walks you through creating an API token in the Solidtime UI, finding the organization id, and saves them to `~/.claude/session-env/solidtime.conf` (created `chmod 600` — the token never leaves that file and is never logged).
 
-Sync is background and local-first: hooks never wait on the network, and a Solidtime instance that's down for days loses nothing — every finished session stays in the local store until it syncs, and both `SessionStart` and `/session-tracker:sync` retry whatever is still pending. Trigger a sync manually, or check sync health (pending count, last error), with:
+Sync is background and local-first: hooks never wait on the network, and a Solidtime instance that's down for days loses nothing — every finished session stays in the local store until it syncs. It runs on three triggers: automatically in the background right after a session ends, again on the next `SessionStart` to retry anything still pending, and on demand via `/session-tracker:sync`. The first sync after configuring also picks up any sessions completed before setup — all pending history in the local store syncs, not just new sessions. Trigger a sync manually, or check sync health (pending count, last error), with:
 
 ```
 /session-tracker:sync

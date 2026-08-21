@@ -227,4 +227,21 @@ bash "$SYNC" >/dev/null 2>&1
 assert_eq "discovery syncs only pending" "1" "$(grep -c 'disc' "$CURL_CAPTURE" | tr -d ' ')"
 assert_eq "disc-1 now done" "1" "$(grep -cx done "$SE/disc-1/solidtime-synced")"
 
+# ---- --check: real credential verification (GET /users/me), no session sync ----
+: > "$CURL_CAPTURE"; printf '200\n' > "$CURL_CTRL"
+: > "$LOG"
+out="$(bash "$SYNC" --check --verbose 2>&1)"
+assert_eq "check 200: hits /users/me" "1" "$(grep -c 'api/v1/users/me' "$CURL_CAPTURE")"
+assert_eq "check 200: no entry POSTs" "0" "$(grep -c -- '-X POST' "$CURL_CAPTURE")"
+assert_eq "check 200: log line" "1" "$(grep -c 'check: HTTP 200' "$LOG")"
+assert_eq "check 200: verbose credentials OK" "1" "$(printf '%s\n' "$out" | grep -c '^credentials OK$')"
+
+: > "$CURL_CAPTURE"; printf '401\n' > "$CURL_CTRL"
+: > "$LOG"
+out="$(bash "$SYNC" --check --verbose 2>&1)"; rc=$?
+assert_eq "check 401: exits 0" "0" "$rc"
+assert_eq "check 401: ERROR log line" "1" "$(grep -c 'ERROR check: HTTP 401' "$LOG")"
+assert_eq "check 401: verbose credentials FAILED" "1" "$(printf '%s\n' "$out" | grep -c '^credentials FAILED: HTTP 401$')"
+: > "$CURL_CTRL"
+
 finish
