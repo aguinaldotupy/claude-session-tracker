@@ -26,7 +26,7 @@ None.
    ```bash
    tail -n 10 ~/.claude/session-env/solidtime-sync.log 2>/dev/null
    ```
-5. Summarize: how many sessions synced just now, how many remain pending, and whether the last known error (if any) still applies (it may predate this run's success).
+5. Summarize: how many sessions synced just now, how many remain pending, and whether the last known error (if any) still applies (it may predate this run's success). Note that the **current** session is never included — it has no end time yet, and posts automatically when it ends — so "0 synced" is the healthy answer when the only outstanding work is this conversation.
 
 ## Implementation hint
 

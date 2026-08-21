@@ -28,7 +28,7 @@ Get the live session and today's total in one call, then render (see Output Form
 bash "$HOME/.claude/session-env/session-query.sh" status --session "${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
 ```
 
-Returns JSON: `{live:{elapsed_seconds,active_seconds,started_at,issue_key}, today:{active_seconds,sessions}}`.
+Returns JSON: `{source, live:{elapsed_seconds,active_seconds,started_at,issue_key}, today:{active_seconds,sessions}, sync:{configured,pending,last_error}}`. Read the keys you need; the object gains keys over time.
 Convert seconds to `Xh Ym`. If `issue_key` is set, show it. `source:"none"` means no history yet.
 
 ## Output Format

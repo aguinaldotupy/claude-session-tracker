@@ -23,7 +23,7 @@ None — this command is interactive. It asks the user for each value in the con
    - the API token
    - `SOLIDTIME_ORG_ID`
    Do not ask for a member id — the sync client resolves and caches it automatically from the memberships API on first run.
-4. Write `~/.claude/session-env/solidtime.conf` with the three `KEY=VALUE` lines and `chmod 600` it. Overwrite any existing file — this command is also how a user rotates a token.
+4. Write `~/.claude/session-env/solidtime.conf` with the three `KEY=VALUE` lines and `chmod 600` it. **Single-quote every value** (`SOLIDTIME_TOKEN='...'`) — the file is `source`d, and Solidtime issues Laravel Sanctum tokens shaped `<id>|<random>`, so an unquoted value would run the half after the `|` as a command and leave the token empty. Overwrite any existing file — this command is also how a user rotates a token, or re-points sync at a different instance or organization (the client detects the change and discards its cached project/member ids automatically).
 5. Verify with one real API call — `--check` makes a single `GET /users/me/memberships` against the instance instead of a normal sync run (which, with zero ended sessions queued, would make no HTTP call at all and could "verify" a wrong token or org by doing nothing) — and confirms the configured organization id is actually among the token's memberships, not just that the token is valid for *some* org:
    ```bash
    bash ~/.claude/session-env/solidtime-sync.sh --check --verbose
@@ -43,9 +43,9 @@ None — this command is interactive. It asks the user for each value in the con
 ```bash
 mkdir -p "$HOME/.claude/session-env"
 cat > "$HOME/.claude/session-env/solidtime.conf" <<EOF
-SOLIDTIME_URL=$SOLIDTIME_URL
-SOLIDTIME_TOKEN=$SOLIDTIME_TOKEN
-SOLIDTIME_ORG_ID=$SOLIDTIME_ORG_ID
+SOLIDTIME_URL='$SOLIDTIME_URL'
+SOLIDTIME_TOKEN='$SOLIDTIME_TOKEN'
+SOLIDTIME_ORG_ID='$SOLIDTIME_ORG_ID'
 EOF
 chmod 600 "$HOME/.claude/session-env/solidtime.conf"
 bash "$HOME/.claude/session-env/solidtime-sync.sh" --check --verbose

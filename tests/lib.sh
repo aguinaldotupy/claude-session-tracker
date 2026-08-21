@@ -4,6 +4,12 @@
 # the runner's environment. Tests that need a non-default grace can re-export it.
 unset SESSION_IDLE_THRESHOLD_SECONDS
 
+# Same reason: SOLIDTIME_* are a documented config path (the env-var mode for
+# ephemeral hosts), so a developer who actually uses sync would otherwise fail
+# every "sync unconfigured" / "no config" assertion in the suite. Tests that
+# need them export their own.
+unset SOLIDTIME_URL SOLIDTIME_TOKEN SOLIDTIME_ORG_ID SOLIDTIME_MEMBER_ID
+
 TESTS_RUN=0
 TESTS_FAILED=0
 

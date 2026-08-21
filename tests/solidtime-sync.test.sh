@@ -102,8 +102,11 @@ export PATH="$BIN:$PATH"
 # Pre-seed the cache so the pre-existing posting-flow tests (written before
 # real resolvers existed) see cache hits and keep their exact curl-call
 # counts instead of picking up extra list/create calls.
+# `scope` must match "<url>|<org>" from solidtime.conf, or the client treats the
+# cache as belonging to another instance/org and discards it (ids from one org
+# are rejected by another).
 PROJNAME="$(basename "$PWD")"
-printf '{"projects":{"%s":"proj-1"},"tags":{"A-7":"tag-1"}}\n' "$PROJNAME" > "$SE/solidtime-cache.json"
+printf '{"scope":"https://time.test|org-1","projects":{"%s":"proj-1"},"tags":{"A-7":"tag-1"}}\n' "$PROJNAME" > "$SE/solidtime-cache.json"
 
 # a finished session with two brackets: [1000,1100] and [1300,1420]
 SID="sess-post"
@@ -200,15 +203,16 @@ printf 'A-9\n' > "$SE/$SID7/issue-tag"
 assert_eq "cache hit: only the entry POST" "1" "$(wc -l < "$CURL_CAPTURE" | tr -d ' ')"
 assert_eq "project_id on wire (cache hit)" "1" "$(grep -c '\"project_id\":\"p1\"' "$CURL_CAPTURE")"
 
-# ---- resolve failure fallback: GET list, POST create, and the tag
-# equivalent all fail (non-2xx) -> _sl_resolve prints empty for both, entry
-# still posts without project_id/tags rather than failing the sync (ruling
-# under review finding). Fresh project name so cache can't short-circuit;
-# SOLIDTIME_MEMBER_ID stays set in conf throughout.
+# ---- resolve failure fallback: the project and tag list GETs both fail
+# (non-2xx) -> _sl_resolve prints empty for both, entry still posts without
+# project_id/tags rather than failing the sync (ruling under review finding).
+# Only TWO failures are queued, not four: a failed list GET no longer falls
+# through to a create POST (it is not evidence the name is absent, so creating
+# would duplicate the project on every network blip).
 SID10="sess-resolve-fail"; mkdir -p "$SE/$SID10"
 printf 'P 7000\nS 7100\n' > "$SE/$SID10/events.log"
 printf 'A-99\n' > "$SE/$SID10/issue-tag"
-: > "$CURL_CAPTURE"; printf '500\n500\n500\n500\n200\n' > "$CURL_CTRL"
+: > "$CURL_CAPTURE"; printf '500\n500\n200\n' > "$CURL_CTRL"
 ( cd "$TMP" && mkdir -p repo3 && cd repo3 && bash "$SYNC" --session "$SID10" ) >/dev/null 2>&1
 assert_eq "resolve-fail: entry still posts (ledger done)" "7000 7220
 done" "$(cat "$SE/$SID10/solidtime-synced")"
@@ -227,7 +231,7 @@ assert_eq "resolve-fail: ERROR resolve logged" "2" "$(grep -c 'ERROR resolve' "$
 SID11="sess-resolve-fail-verbose"; mkdir -p "$SE/$SID11"
 printf 'P 7200\nS 7300\n' > "$SE/$SID11/events.log"
 printf 'A-100\n' > "$SE/$SID11/issue-tag"
-: > "$CURL_CAPTURE"; printf '500\n500\n500\n500\n200\n' > "$CURL_CTRL"
+: > "$CURL_CAPTURE"; printf '500\n500\n200\n' > "$CURL_CTRL"
 ( cd "$TMP" && mkdir -p repo4 && cd repo4 && bash "$SYNC" --session "$SID11" --verbose ) >/dev/null 2>&1
 assert_eq "resolve-fail verbose: entry still posts (ledger done)" "7200 7420
 done" "$(cat "$SE/$SID11/solidtime-synced")"
@@ -295,7 +299,8 @@ st_upsert_session "disc-noevents" "/p/x" "/p/x" "" "" 100 400 300 0 0 "exit" 401
 bash "$SYNC" >/dev/null 2>&1
 assert_eq "no-events session marked done" "1" "$(grep -cx done "$SE/disc-noevents/solidtime-synced")"
 assert_eq "no-events session: no HTTP call" "0" "$(grep -c 'disc-noevents' "$CURL_CAPTURE")"
-assert_eq "no-events session: logged" "1" "$(grep -c 'session disc-noevents: no events.log, marking done' "$LOG")"
+# ERROR, not info: marking done is irreversible, so it must reach status.sync.last_error
+assert_eq "no-events session: logged as ERROR" "1" "$(grep -c 'ERROR session disc-noevents: no events.log' "$LOG")"
 
 # ---- brackets end at the session's recorded end_ts, not `now`: a session that
 # ended mid-tool-call (no trailing S) and is only synced later must not have its
@@ -415,5 +420,62 @@ assert_eq "file precedence: file token on wire, not env token" "1" "$(grep -c 'B
 assert_eq "file precedence: env token not on wire" "0" "$(grep -c 'env-secret-conflict' "$CURL_CAPTURE")"
 unset SOLIDTIME_URL SOLIDTIME_TOKEN SOLIDTIME_ORG_ID
 : > "$CURL_CTRL"
+
+# ---- regression: the HTTP error body must reach the log. It used to be
+# assigned to a global inside _sl_post_entry, which always runs in the $( )
+# that captures the status code -- so the assignment died with the subshell and
+# every failure logged a bare status with no explanation. ----
+seed_cache() { printf '{"scope":"https://time.test|org-1","projects":{"repo":"p1"},"tags":{"BR-42":"tag-br"}}\n' > "$SE/solidtime-cache.json"; }
+mkdir -p "$TMP/repo"
+seed_cache
+SID20="sess-errbody"; mkdir -p "$SE/$SID20"
+printf 'P 9000\nS 9060\n' > "$SE/$SID20/events.log"
+: > "$CURL_CAPTURE"; printf '422\n' > "$CURL_CTRL"; : > "$LOG"
+( cd "$TMP/repo" && bash "$SYNC" --session "$SID20" ) >/dev/null 2>&1
+assert_eq "error body reaches the log" "1" "$(grep -c 'HTTP 422 {"data"' "$LOG")"
+: > "$CURL_CTRL"
+
+# ---- regression: the branch-derived issue key must become a tag. Only the
+# explicit issue-tag file used to be read, so the common case -- a branch like
+# feat/BR-42-title with no /session-tracker:tag -- posted every entry untagged
+# while the statusline and `history` both showed the key. ----
+if command -v sqlite3 >/dev/null 2>&1; then
+  # shellcheck source=/dev/null
+  . "$SE/db.sh"
+  st_db_init 2>/dev/null
+  SID21="sess-branch-tag"; mkdir -p "$SE/$SID21"
+  printf 'P 9100\nS 9160\n' > "$SE/$SID21/events.log"   # NB: no issue-tag file
+  st_upsert_session "$SID21" "$TMP/repo" "$TMP/repo" "feat/BR-42-title" "BR-42" \
+    9000 9200 200 100 100 "exit" 9200
+  seed_cache
+  : > "$CURL_CAPTURE"; : > "$CURL_CTRL"
+  ( cd "$TMP/repo" && bash "$SYNC" --session "$SID21" ) >/dev/null 2>&1
+  assert_eq "branch issue key becomes a tag" "1" "$(grep -c '"tags":\["tag-br"\]' "$CURL_CAPTURE")"
+fi
+
+# ---- regression: re-pointing at another organization must discard cached ids.
+# A project/member id from one org is rejected by another, so reusing them
+# wedged every future run with no recovery but deleting the cache by hand. ----
+seed_cache
+sed 's/^SOLIDTIME_ORG_ID=.*/SOLIDTIME_ORG_ID=org-other/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"
+mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
+: > "$CURL_CAPTURE"; : > "$CURL_CTRL"
+bash "$SYNC" >/dev/null 2>&1
+assert_eq "org change discards cached project id" "" "$(jq -r '.projects.repo // ""' "$SE/solidtime-cache.json")"
+assert_eq "org change records the new scope" "https://time.test|org-other" "$(jq -r '.scope' "$SE/solidtime-cache.json")"
+sed 's/^SOLIDTIME_ORG_ID=.*/SOLIDTIME_ORG_ID=org-1/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"
+mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
+
+# ---- regression: curl is this file's one hard dependency. Without the guard,
+# every trigger resolved an empty member_id and logged "member_id missing" --
+# an error naming the wrong cause that never clears. ----
+: > "$LOG"
+NOCURL="$TMP/nocurl"; mkdir -p "$NOCURL"
+for c in bash sh jq sqlite3 awk sed grep date mkdir rmdir rm mv cp cat head tail wc tr find hostname basename dirname mktemp touch ln; do
+  p="$(command -v "$c" 2>/dev/null)" && ln -sf "$p" "$NOCURL/$c"
+done
+( PATH="$NOCURL"; export PATH; bash "$SYNC" >/dev/null 2>&1 )
+assert_eq "no curl: names the real cause" "1" "$(grep -c 'ERROR curl not found' "$LOG")"
+assert_eq "no curl: no misleading member_id error" "0" "$(grep -c 'ERROR member_id missing' "$LOG")"
 
 finish

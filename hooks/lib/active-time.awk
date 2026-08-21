@@ -20,9 +20,12 @@ BEGIN { open = -1; last_stop = -1; bstart = -1; bstop = -1; active = 0; last_emi
 
 function emit_bracket(s, e) {
   if (mode == "brackets") {
-    # No engagement was ever opened (log starts with S/SF — e.g. the plugin
-    # was installed mid-response): there is no bracket, and clamping -1 up to
-    # last_emit_end would invent one starting at epoch 0.
+    # No engagement was ever opened (log starts with S/SF — the plugin was
+    # installed mid-response, or reset-session truncated the log mid-turn).
+    # The scalar still credits the reading grace after that orphan stop, so the
+    # bracket must exist too or the two disagree; anchor it at the stop itself,
+    # never at -1 (which would clamp to epoch 0 and post a 55-year entry).
+    if (s < 0) s = bstop
     if (s < 0) return
     if (s < last_emit_end) s = last_emit_end
     if (e > s) {
@@ -33,6 +36,12 @@ function emit_bracket(s, e) {
 }
 
 { kind = $1; ts = $2 + 0 }
+# A line whose timestamp is missing or non-numeric yields ts 0 — a truncated
+# append, or a hook that ran without `date` on PATH. Both accountings must drop
+# it: scalar would open an engagement at the epoch (a 55-year "active" span the
+# SessionEnd clamp then hides), and brackets mode would post that span verbatim
+# as a Solidtime time entry, which nothing clamps.
+ts <= 0 { next }
 kind == "P" || kind == "T" || kind == "D" || kind == "DF" {
   if (last_stop >= 0) {
     gap = ts - last_stop

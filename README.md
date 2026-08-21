@@ -162,7 +162,7 @@ Set it up with:
 /session-tracker:sync-setup
 ```
 
-which walks you through creating an API token in the Solidtime UI, finding the organization id, and saves them to `~/.claude/session-env/solidtime.conf` (created `chmod 600` — the token is sent only to your configured Solidtime instance over HTTPS, and is never written to any other file or log).
+which walks you through creating an API token in the Solidtime UI, finding the organization id, and saves them to `~/.claude/session-env/solidtime.conf` (created `chmod 600` — the token is sent only to the instance you configured in `SOLIDTIME_URL`, and is never written to any other file or log). Use an `https://` URL unless your instance is on a trusted local network: the token travels as a bearer header, so a plain `http://` URL sends it in the clear.
 
 Headless or ephemeral environments (CI, cloud, sandbox VMs) where writing that file is awkward can instead set `SOLIDTIME_URL`, `SOLIDTIME_TOKEN`, and `SOLIDTIME_ORG_ID` as environment variables. The file, when present, always takes precedence over the environment.
 
@@ -222,6 +222,9 @@ claude plugin update session-tracker@aguinaldotupy --scope user
   JSON-lines log (`history.jsonl`) for the same reads. Install `sqlite3` to
   get the relational store, correct cross-session totals, and per-project
   (worktree-aware) grouping. Present by default on macOS.
+- **`curl`** — required only for the optional Solidtime sync (see above).
+  Without it, sync logs one line to `~/.claude/session-env/solidtime-sync.log`
+  and stays inert; everything else is unaffected. Present by default on macOS.
 - **Native Windows** is not supported directly — use WSL or Git Bash, since
   the hooks and `session-query` are POSIX shell/`awk`.
 

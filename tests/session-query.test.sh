@@ -43,19 +43,24 @@ assert_eq "CLAUDE_SESSION_ID wins over CLAUDE_CODE_SESSION_ID" "1000" "$(printf 
 out="$(bash "$SQ" status --session none)"
 assert_eq "sync unconfigured" "false" "$(printf '%s' "$out" | jq -r '.sync.configured')"
 
-# configured with one pending session and one error line
+# configured, with one error line
 printf 'SOLIDTIME_URL=x\nSOLIDTIME_TOKEN=y\nSOLIDTIME_ORG_ID=z\n' > "$HOME/.claude/session-env/solidtime.conf"
 printf '2026-08-21T10:00:00 ERROR session s1 bracket 0: HTTP 500\n' > "$HOME/.claude/session-env/solidtime-sync.log"
 out="$(bash "$SQ" status --session none)"
 assert_eq "sync configured" "true" "$(printf '%s' "$out" | jq -r '.sync.configured')"
-assert_eq "sync pending counts unsynced" "2" "$(printf '%s' "$out" | jq -r '.sync.pending')"
 assert_eq "sync last error surfaced" "1" "$(printf '%s' "$out" | jq -r '.sync.last_error' | grep -c 'HTTP 500')"
 
-# a session with a 'done' ledger stops counting as pending
-mkdir -p "$HOME/.claude/session-env/s1"
-printf '100 200\ndone\n' > "$HOME/.claude/session-env/s1/solidtime-synced"
+# pending is read from the counter the sync writer publishes -- never re-derived
+# here by scanning one ledger file per session (that cost ~+35ms on every
+# statusline render, and read "everything in 30 days" before the first sync run).
+assert_eq "sync pending 0 before any run" "0" "$(printf '%s' "$out" | jq -r '.sync.pending')"
+printf '3\n' > "$HOME/.claude/session-env/solidtime-pending"
 out="$(bash "$SQ" status --session none)"
-assert_eq "sync pending drops for done ledger" "1" "$(printf '%s' "$out" | jq -r '.sync.pending')"
+assert_eq "sync pending read from published counter" "3" "$(printf '%s' "$out" | jq -r '.sync.pending')"
+printf 'garbage\n' > "$HOME/.claude/session-env/solidtime-pending"
+out="$(bash "$SQ" status --session none)"
+assert_eq "sync pending non-numeric counter is 0" "0" "$(printf '%s' "$out" | jq -r '.sync.pending')"
+rm -f "$HOME/.claude/session-env/solidtime-pending"
 
 # an error a later run already moved past must not stay pinned forever
 printf '2026-08-21T11:00:00 sync run start (session=auto)\n2026-08-21T11:00:01 sync run end\n' \
@@ -63,12 +68,6 @@ printf '2026-08-21T11:00:00 sync run start (session=auto)\n2026-08-21T11:00:01 s
 out="$(bash "$SQ" status --session none)"
 assert_eq "sync error cleared by later clean run" "" "$(printf '%s' "$out" | jq -r '.sync.last_error')"
 
-# sessions that ended before the sync watermark are never discoverable, so they
-# must not be counted pending (otherwise a healthy sync reads as stuck forever)
-printf '%s\n' "$((TODAY + 60))" > "$HOME/.claude/session-env/solidtime-since"
-out="$(bash "$SQ" status --session none)"
-assert_eq "sync pending ignores pre-watermark sessions" "0" "$(printf '%s' "$out" | jq -r '.sync.pending')"
-rm -f "$HOME/.claude/session-env/solidtime-since"
 rm -f "$HOME/.claude/session-env/solidtime.conf"
 
 # sync configured via env var alone (no file) -- ephemeral-environment fallback
@@ -125,6 +124,20 @@ assert_eq "timeline one interval" "1" "$(printf '%s' "$outt" | jq -r '.intervals
 assert_eq "timeline api_error (SF)" "true" "$(printf '%s' "$outt" | jq -r '.intervals[0].api_error')"
 assert_eq "timeline Read seconds" "12" "$(printf '%s' "$outt" | jq -r '.intervals[0].tools[]|select(.tool=="Read").seconds')"
 assert_eq "timeline Bash failed (DF)" "true" "$(printf '%s' "$outt" | jq -r '.intervals[0].tools[]|select(.tool=="Bash").failed')"
+
+# a live events.log wins over the (legacy, frozen-at-import) events table
+mkdir -p "$HOME/.claude/session-env/s1"
+printf 'P 3000\nT 3010 Edit\nD 3040 Edit\nS 3100\n' > "$HOME/.claude/session-env/s1/events.log"
+outt="$(bash "$SQ" timeline s1)"
+assert_eq "timeline prefers live events.log" "30" "$(printf '%s' "$outt" | jq -r '.intervals[0].tools[]|select(.tool=="Edit").seconds')"
+
+# ...but an EMPTY log must not shadow it: the reset-session skill truncates
+# events.log to zero bytes, and `-f` (exists) instead of `-s` (non-empty) turned
+# a populated legacy timeline into an empty one.
+: > "$HOME/.claude/session-env/s1/events.log"
+outt="$(bash "$SQ" timeline s1)"
+assert_eq "empty events.log falls back to events table" "12" "$(printf '%s' "$outt" | jq -r '.intervals[0].tools[]|select(.tool=="Read").seconds')"
+rm -rf "$HOME/.claude/session-env/s1"
 
 # unknown session → empty intervals, valid json
 oute="$(bash "$SQ" timeline nope-xyz)"

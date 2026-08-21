@@ -48,7 +48,11 @@ _sl_log() {
 }
 
 # Epoch → UTC ISO8601. BSD date first (macOS), GNU fallback.
+# Rejects anything that is not a positive integer: BSD `date -u -r ''` happily
+# returns 1970-01-01T00:00:00Z with status 0 (GNU returns empty), so a malformed
+# bracket would silently post a 55-year time entry on macOS and a 422 on Linux.
 _sl_iso8601() {
+  case "${1:-}" in ''|0|*[!0-9]*) return 1 ;; esac
   date -u -r "$1" +%FT%TZ 2>/dev/null || date -u -d "@$1" +%FT%TZ
 }
 
@@ -102,9 +106,18 @@ _sl_check() {
 # problem, not "absent").
 CONF_SOURCED=0
 if [ -f "$_SL_CONF" ]; then
-  [ -r "$_SL_CONF" ] || exit 0
+  if [ ! -r "$_SL_CONF" ]; then
+    _sl_rotate; _sl_log "ERROR config unreadable: $_SL_CONF (check permissions)"
+    exit 0
+  fi
+  # `set +u` around the source: under `set -u` a conf line referencing an unset
+  # variable (e.g. SOLIDTIME_URL="$SOLIDTIME_HOST/api") terminates this shell
+  # outright -- the `||` branch never runs, nothing is logged, and every trigger
+  # dies silently while the statusline still reports sync as configured.
+  set +u
   # shellcheck source=/dev/null
-  . "$_SL_CONF" 2>/dev/null || exit 0
+  . "$_SL_CONF" 2>/dev/null || { set -u; _sl_rotate; _sl_log "ERROR config failed to parse: $_SL_CONF"; exit 0; }
+  set -u
   CONF_SOURCED=1
 fi
 if [ -z "${SOLIDTIME_URL:-}" ] || [ -z "${SOLIDTIME_TOKEN:-}" ] || [ -z "${SOLIDTIME_ORG_ID:-}" ]; then
@@ -118,7 +131,25 @@ if [ -z "${SOLIDTIME_URL:-}" ] || [ -z "${SOLIDTIME_TOKEN:-}" ] || [ -z "${SOLID
   exit 0
 fi
 
+# curl is this file's one hard dependency and the only one the plugin does not
+# already require. Without the guard every trigger burns a process, resolves an
+# empty member_id, and logs "member_id missing" -- an error that names the wrong
+# cause and never clears.
+if ! command -v curl >/dev/null 2>&1; then
+  _sl_rotate; _sl_log "ERROR curl not found: Solidtime sync requires curl"
+  exit 0
+fi
+
 _sl_rotate
+
+# The id cache is only valid for the instance+org it was populated from: a
+# project or member id from another org is rejected there (403/422), which would
+# wedge every future run with no way to recover but deleting the file by hand.
+# Re-pointing SOLIDTIME_URL/SOLIDTIME_ORG_ID therefore starts from an empty cache.
+_SL_SCOPE="${SOLIDTIME_URL%/}|$SOLIDTIME_ORG_ID"
+if [ "$(jq -r '.scope // empty' "$_SL_CACHE" 2>/dev/null)" != "$_SL_SCOPE" ]; then
+  jq -n --arg s "$_SL_SCOPE" '{scope:$s, projects:{}, tags:{}}' > "$_SL_CACHE" 2>/dev/null || true
+fi
 
 # Sync watermark: the epoch at which sync first became configured on this host.
 # Discovery never posts sessions that ended before it -- "no backfill of
@@ -145,7 +176,12 @@ fi
 # skipping: it is the only trigger that force-syncs a resumed session, so a
 # lost run would silently drop that session's new brackets forever.
 _sl_lock_tries=1
-[ -n "$ONLY_SID" ] && _sl_lock_tries=15
+# --verbose too, not just --session: /session-tracker:sync and the sync skill are
+# the interactive triggers, and a background run launched seconds earlier at
+# SessionStart can hold the lock for a minute. Giving up after one try made the
+# user's explicit "sync now" a no-op whose only trace is a stderr line neither
+# prompt file knows how to interpret.
+if [ -n "$ONLY_SID" ] || [ "$VERBOSE" = 1 ]; then _sl_lock_tries=15; fi
 while ! mkdir "$_SL_LOCK" 2>/dev/null; do
   _sl_lock_tries=$((_sl_lock_tries - 1))
   if [ -n "$(find "$_SL_LOCK" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
@@ -163,18 +199,36 @@ trap 'rmdir "$_SL_LOCK" 2>/dev/null' EXIT
 
 _sl_log "sync run start (session=${ONLY_SID:-auto})"
 
+# "is this session fully synced?" without forking grep. Discovery re-checks every
+# session since the watermark on every SessionStart, and the watermark is never
+# advanced, so the candidate list only grows: one fork per historical session
+# measured ~1.1s per no-op run at 600 sessions.
+_sl_ledger_done() {
+  local line
+  [ -f "$1" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ "$line" = done ] && return 0
+  done < "$1"
+  return 1
+}
+
 _sl_cache_get() { jq -r --arg k "$2" ".$1[\$k] // empty" "$_SL_CACHE" 2>/dev/null; }
+# mktemp beside the cache, not in TMPDIR: on macOS those are different
+# filesystems, so `mv` would be a non-atomic copy+unlink that can leave a
+# truncated cache behind. Same directory => a real rename.
 _sl_cache_put() {
-  local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/slcache.XXXXXX")"
+  local tmp; tmp="$(mktemp "$_SL_ENV/slcache.XXXXXX")" || return 1
   jq --arg k "$2" --arg v "$3" ".$1[\$k] = \$v" "$_SL_CACHE" 2>/dev/null > "$tmp" \
-    || jq -n --arg k "$2" --arg v "$3" "{projects:{},tags:{}} | .$1[\$k] = \$v" > "$tmp"
+    || jq -n --arg s "$_SL_SCOPE" --arg k "$2" --arg v "$3" "{scope:\$s,projects:{},tags:{}} | .$1[\$k] = \$v" > "$tmp"
+  [ -s "$tmp" ] || { rm -f "$tmp"; return 1; }
   mv "$tmp" "$_SL_CACHE"
 }
 _sl_cache_get_member() { jq -r '.member_id // empty' "$_SL_CACHE" 2>/dev/null; }
 _sl_cache_put_member() {
-  local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/slcache.XXXXXX")"
+  local tmp; tmp="$(mktemp "$_SL_ENV/slcache.XXXXXX")" || return 1
   jq --arg v "$1" '.member_id = $v' "$_SL_CACHE" 2>/dev/null > "$tmp" \
-    || jq -n --arg v "$1" '{projects:{},tags:{},member_id:$v}' > "$tmp"
+    || jq -n --arg s "$_SL_SCOPE" --arg v "$1" '{scope:$s,projects:{},tags:{},member_id:$v}' > "$tmp"
+  [ -s "$tmp" ] || { rm -f "$tmp"; return 1; }
   mv "$tmp" "$_SL_CACHE"
 }
 
@@ -190,8 +244,16 @@ _sl_resolve() {
   code="$(curl -sS -o "$bodyf" -w '%{http_code}' \
     -H "Authorization: Bearer $SOLIDTIME_TOKEN" -H "Accept: application/json" \
     --connect-timeout 5 --max-time 15 "$url" 2>/dev/null)"
-  case "$code" in 2*) id="$(jq -r --arg n "$name" '.data[]? | select(.name==$n) | .id' "$bodyf" 2>/dev/null | head -n1)" ;; esac
-  if [ -z "$id" ]; then
+  local listed=0
+  case "$code" in
+    2*) listed=1; id="$(jq -r --arg n "$name" '.data[]? | select(.name==$n) | .id' "$bodyf" 2>/dev/null | head -n1)" ;;
+    *)  _sl_log "ERROR resolve $kind '$name': list HTTP $code $(head -c 200 "$bodyf" | tr -d '\n')" ;;
+  esac
+  # Only create when the list call actually succeeded. A failed GET (000 on a
+  # connection drop, 429, 401) is NOT evidence that the name is absent -- falling
+  # through to POST would create a duplicate project/tag on every network blip
+  # and then cache the duplicate's id, permanently splitting the dashboard.
+  if [ -z "$id" ] && [ "$listed" = 1 ]; then
     # ProjectStoreRequest requires color + is_billable (verified API delta);
     # TagStoreRequest needs name only.
     if [ "$kind" = "projects" ]; then
@@ -210,7 +272,13 @@ _sl_resolve() {
     esac
   fi
   rm -f "$bodyf"
-  [ -n "$id" ] && _sl_cache_put "$kind" "$name" "$id" && printf '%s' "$id"
+  # Two statements, not an && chain: a failed cache write (unwritable HOME, full
+  # disk) must not swallow an id we already hold, or the entry silently posts
+  # with no project.
+  if [ -n "$id" ]; then
+    _sl_cache_put "$kind" "$name" "$id" || _sl_log "ERROR cache write failed for $kind '$name'"
+    printf '%s' "$id"
+  fi
   return 0
 }
 
@@ -239,12 +307,14 @@ _sl_resolve_member() {
 }
 
 # POST one time entry. Args: start_iso end_iso description project_id tag_id
-# Prints HTTP code; body (for error logging) lands in $_SL_BODY.
+# Prints "<http_code><TAB><truncated body>" on ONE line. The body travels in the
+# return value, not a global: this function is always called through `$( )`, so
+# any variable it assigns dies with that subshell and the caller would log every
+# failure with an empty body -- exactly the diagnostic the sync skill promises.
 # Deliberately no curl --retry: creates are not idempotent server-side, and
 # curl retries 5xx/timeouts -- a request the server accepted but whose reply
 # was lost would be re-sent as a second time entry. Transient failures are
 # retried at the next trigger instead (nothing is written to the ledger).
-_SL_BODY=""
 _sl_post_entry() {
   local start="$1" end="$2" desc="$3" proj="$4" tag="$5"
   local url payload bodyf code
@@ -266,9 +336,9 @@ _sl_post_entry() {
     -H "Accept: application/json" \
     --connect-timeout 5 --max-time 30 \
     -d "$payload" 2>/dev/null)"
-  _SL_BODY="$(head -c 300 "$bodyf" 2>/dev/null | tr -d '\n')"
+  local body; body="$(head -c 300 "$bodyf" 2>/dev/null | tr -d '\n\t')"
   rm -f "$bodyf"
-  printf '%s' "${code:-000}"
+  printf '%s\t%s' "${code:-000}" "$body"
 }
 
 # Project NAME for a session, from the history store (the hook's cwd is NOT
@@ -282,9 +352,37 @@ _sl_session_project() {
   # appends to history.jsonl even though history.db exists), so a miss in one
   # must still consult the other.
   if [ -z "$name" ] && [ -f "$_SL_ENV/history.jsonl" ]; then
-    name="$(jq -r --arg s "$sid" 'select(.session_id==$s) | .project_dir' "$_SL_ENV/history.jsonl" 2>/dev/null | tail -n1 | awk -F/ '{print $NF}')"
+    local dir
+    dir="$(jq -r --arg s "$sid" 'select(.session_id==$s) | .project_dir // empty' "$_SL_ENV/history.jsonl" 2>/dev/null | tail -n1)"
+    # Through st_project_root, exactly like the sqlite side above: the raw
+    # project_dir of a git worktree is <repo>/.claude/worktrees/<name>, whose
+    # basename would become a SECOND Solidtime project for the same repo. This is
+    # the only path a sqlite3-less host ever takes, so without it every worktree
+    # on that host splits off its own project.
+    if [ -n "$dir" ]; then
+      command -v st_project_root >/dev/null 2>&1 && dir="$(st_project_root "$dir")"
+      name="$(basename "$dir")"
+    fi
   fi
   [ -n "$name" ] && printf '%s' "$name" || basename "${PWD:-unknown}"
+}
+
+# Issue key for a session, resolved the SAME two ways the rest of the plugin
+# does (README "Issue keys"): the explicit issue-tag file wins, else the key the
+# SessionEnd hook already derived from the branch name and stored. Reading only
+# the tag file would drop the common case -- a branch like `feat/LIN-456-title`
+# with no explicit /session-tracker:tag -- so every one of those sessions would
+# land in Solidtime untagged while the statusline and `history` both show the key.
+_sl_session_issue() {
+  local sid="$1" sdir="$_SL_ENV/$1" key=""
+  [ -f "$sdir/issue-tag" ] && key="$(head -n1 "$sdir/issue-tag" 2>/dev/null | tr -d '[:space:]')"
+  if [ -z "$key" ] && command -v st_has_sqlite >/dev/null 2>&1 && st_has_sqlite && [ -f "$(st_db_path)" ]; then
+    key="$(sqlite3 "$(st_db_path)" "SELECT COALESCE(issue_key,'') FROM sessions WHERE session_id='$(st_sql_escape "$sid")';" 2>/dev/null)"
+  fi
+  if [ -z "$key" ] && [ -f "$_SL_ENV/history.jsonl" ]; then
+    key="$(jq -r --arg s "$sid" 'select(.session_id==$s) | .issue_key // empty' "$_SL_ENV/history.jsonl" 2>/dev/null | tail -n1)"
+  fi
+  printf '%s' "$key"
 }
 
 # Terminal epoch for bracket computation: the session's recorded end_ts, NOT
@@ -327,10 +425,15 @@ _sl_sync_session() {
   if [ ! -f "$events" ]; then
     mkdir -p "$sdir"
     printf 'done\n' >> "$ledger"
-    _sl_log "session $sid: no events.log, marking done"
+    # ERROR, not an info line: `done` is the only idempotency key, so this is
+    # irreversible. history.db and ~/.claude/session-env/<sid>/ have independent
+    # lifetimes -- clearing session dirs to reclaim disk, or restoring only the
+    # DB into a fresh container, silently writes off every session at once.
+    # Surfacing it in `status.sync.last_error` is the only warning the user gets.
+    _sl_log "ERROR session $sid: no events.log (session dir gone?), marking done without posting"
     return 0
   fi
-  [ "$force" = "force" ] || { grep -q '^done$' "$ledger" 2>/dev/null && return 0; }
+  [ "$force" = "force" ] || { _sl_ledger_done "$ledger" && return 0; }
   # member_id is required on every time-entry create call (API delta over the
   # design draft). SOLIDTIME_MEMBER_ID from config wins if set; otherwise
   # auto-resolve via GET memberships and cache the result (controller
@@ -341,26 +444,46 @@ _sl_sync_session() {
     _sl_log "ERROR member_id missing (set SOLIDTIME_MEMBER_ID or run sync-setup)"
     return 1
   fi
-  issue=""; [ -f "$sdir/issue-tag" ] && issue="$(head -n1 "$sdir/issue-tag" | tr -d '[:space:]')"
-  host="$(hostname 2>/dev/null || echo unknown)"
+  # A missing or empty bracket program means "computed nothing", which is
+  # indistinguishable from "no brackets" once the loop below runs -- and the run
+  # would then append `done` and discard the session's whole time silently.
+  if [ ! -s "$_SL_ENV/active-time.awk" ]; then
+    _sl_log "ERROR session $sid: $_SL_ENV/active-time.awk missing or empty"
+    return 1
+  fi
+  issue="$(_sl_session_issue "$sid")"
+  # -s (short name): plain `hostname` is the FQDN on most corporate Linux boxes
+  # and "Firstname-Lastname-MacBook-Pro.local" on macOS, and this string is sent
+  # to a third-party SaaS in every entry description.
+  host="$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo unknown)"
   proj="$(_sl_resolve_project "$(_sl_session_project "$sid")")"
   tag=""; [ -n "$issue" ] && tag="$(_sl_resolve_tag "$issue")"
-  local now idx=0 posted=0 start end from prev code
+  local now idx=0 posted=0 start end from prev resp code iso_from iso_end
   now="$(_sl_session_end_ts "$sid")"
   while read -r start end; do
     [ -z "$start" ] && continue
+    # Guard the pair before it can reach the API: a truncated or malformed
+    # events.log line yields ts 0, and a bracket starting at epoch 0 would post a
+    # 55-year time entry that the ledger then marks as successfully synced.
+    case "$start$end" in ''|*[!0-9]*) _sl_log "ERROR session $sid bracket $idx: bad range '$start $end'"; return 1 ;; esac
     # Last end already posted for this bracket start, if any.
     prev="$(grep "^$start " "$ledger" 2>/dev/null | tail -n1 | cut -d' ' -f2)"
     from="$start"
     if [ -n "$prev" ]; then
+      case "$prev" in ''|*[!0-9]*) prev="" ;; esac
+    fi
+    if [ -n "$prev" ]; then
       [ "$prev" -ge "$end" ] && { idx=$((idx + 1)); continue; }
       from="$prev"   # bracket grew after a resume: post only the new tail
     fi
-    code="$(_sl_post_entry "$(_sl_iso8601 "$from")" "$(_sl_iso8601 "$end")" \
+    iso_from="$(_sl_iso8601 "$from")" && iso_end="$(_sl_iso8601 "$end")" || {
+      _sl_log "ERROR session $sid bracket $idx: cannot format range '$from $end'"; return 1; }
+    resp="$(_sl_post_entry "$iso_from" "$iso_end" \
               "$host · ${sid%%-*}:${idx}" "$proj" "$tag")"
+    code="${resp%%	*}"
     case "$code" in
       2*) printf '%s %s\n' "$start" "$end" >> "$ledger"; posted=$((posted + 1)) ;;
-      *)  _sl_log "ERROR session $sid bracket $idx: HTTP $code ${_SL_BODY}"; return 1 ;;
+      *)  _sl_log "ERROR session $sid bracket $idx: HTTP $code ${resp#*	}"; return 1 ;;
     esac
     idx=$((idx + 1))
   done <<EOF
@@ -394,12 +517,27 @@ if [ -n "$ONLY_SID" ]; then
 else
   while IFS= read -r sid; do
     [ -z "$sid" ] && continue
-    grep -q '^done$' "$_SL_ENV/$sid/solidtime-synced" 2>/dev/null && continue
+    _sl_ledger_done "$_SL_ENV/$sid/solidtime-synced" && continue
     _sl_sync_session "$sid" || true
   done <<EOF
 $(_sl_pending_sids)
 EOF
 fi
+
+# Publish the pending count. The read side (session-query.sh `status`) used to
+# re-derive it by listing sessions from the store and fanning `xargs grep` out
+# over one ledger file per session -- measured +35ms on every statusline render,
+# for a number this process already has. It was also wrong before the first run:
+# with no watermark file yet it reported every session of the last 30 days as
+# pending, the exact "healthy sync looks permanently stuck" case it meant to avoid.
+_sl_pending=0
+while IFS= read -r sid; do
+  [ -z "$sid" ] && continue
+  _sl_ledger_done "$_SL_ENV/$sid/solidtime-synced" || _sl_pending=$((_sl_pending + 1))
+done <<EOF
+$(_sl_pending_sids)
+EOF
+printf '%s\n' "$_sl_pending" > "$_SL_ENV/solidtime-pending" 2>/dev/null || true
 
 _sl_log "sync run end"
 exit 0

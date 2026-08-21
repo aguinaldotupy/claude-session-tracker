@@ -55,32 +55,21 @@ EOF
   local senv="$HOME/.claude/session-env"
   if [ -f "$senv/solidtime.conf" ] || [ -n "${SOLIDTIME_URL:-}" ]; then
     sync_conf=true
-    # Candidate window: last 30 days (this runs on every statusline render) AND
-    # at or after the sync watermark — discovery never posts sessions that ended
-    # before sync was configured, so counting those would pin `pending` above
-    # zero forever and make a healthy sync look permanently stuck.
-    local cutoff since sids total done_n
-    cutoff=$((now - 2592000))
-    since="$(_sq_int "$(head -n1 "$senv/solidtime-since" 2>/dev/null | tr -d '[:space:]')")"
-    [ "$since" -gt "$cutoff" ] && cutoff="$since"
-    sids=""
-    if [ "$src" = sqlite ]; then
-      sids="$(sqlite3 "$(st_db_path)" "SELECT session_id FROM sessions WHERE end_ts >= $cutoff;" 2>/dev/null)"
-    elif [ "$src" = jsonl ]; then
-      sids="$(jq -r --argjson c "$cutoff" 'select(.end_ts >= $c) | .session_id' "$(_sq_hist)" 2>/dev/null | sort -u)"
-    fi
-    if [ -n "$sids" ]; then
-      # One grep over all ledgers, not one fork per session row: a busy month is
-      # hundreds of sessions and the statusline re-renders constantly.
-      total="$(printf '%s\n' "$sids" | grep -c .)"
-      done_n="$(printf '%s\n' "$sids" | awk -v d="$senv/" '{print d $0 "/solidtime-synced"}' \
-                 | tr '\n' '\0' | xargs -0 grep -lx done 2>/dev/null | grep -c .)"
-      sync_pending=$((total - done_n))
-      [ "$sync_pending" -lt 0 ] && sync_pending=0
-    fi
+    # Published by solidtime-sync.sh at the end of every run — the writer already
+    # walks the pending list, so the read side just reads the number. Deriving it
+    # here cost a store scan plus one `grep` per session ledger in the last 30
+    # days on every statusline render (measured +35ms, ~+89% on this function),
+    # and it read wrong before the first sync run: with no watermark file yet it
+    # counted every session of the last 30 days as pending, i.e. exactly the
+    # "healthy sync looks permanently stuck" case it was meant to avoid.
+    sync_pending="$(_sq_int "$(head -n1 "$senv/solidtime-pending" 2>/dev/null | tr -d '[:space:]')")"
     # Only errors from the most recent run: an ERROR a later successful run has
-    # already moved past must not stay pinned in the statusline forever.
-    sync_err="$(awk '/sync run start/{e=""} / ERROR /{e=$0} END{if (e != "") print e}' \
+    # already moved past must not stay pinned in the statusline forever. A
+    # credential `--check` counts as such a run — it never logs "sync run start",
+    # so without it here a 401 stayed pinned after sync-setup fixed the token,
+    # and /sync kept telling the user to re-run the setup they just completed.
+    # Order matters: a failing check line matches both rules and the second wins.
+    sync_err="$(awk '/sync run start|check: HTTP/{e=""} / ERROR /{e=$0} END{if (e != "") print e}' \
                   "$senv/solidtime-sync.log" 2>/dev/null)"
   fi
   jq -n --arg source "$src" --argjson elapsed "$live_elapsed" --argjson active "$live_active" \
@@ -165,7 +154,10 @@ sq_timeline() {
   local sid="${1:-}" src rows
   src="$(_sq_source)"
   local ev_src=""
-  if [ -f "$HOME/.claude/session-env/$sid/events.log" ]; then
+  # -s, not -f: the reset-session skill truncates events.log to zero bytes, and
+  # an empty file must not shadow the rows a pre-v3.1.2 import left in `events`
+  # (that shadowing turned a populated timeline into an empty one).
+  if [ -s "$HOME/.claude/session-env/$sid/events.log" ]; then
     ev_src="$(cat "$HOME/.claude/session-env/$sid/events.log" 2>/dev/null)"
   elif st_has_sqlite && [ -f "$(st_db_path)" ]; then
     ev_src="$(sqlite3 -separator ' ' "$(st_db_path)" "SELECT kind, ts, COALESCE(tool,'') FROM events WHERE session_id='$(st_sql_escape "$sid")' ORDER BY ts;" 2>/dev/null)"

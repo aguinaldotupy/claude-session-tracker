@@ -32,12 +32,17 @@ Runs the Solidtime sync client and reports sync health — same behavior as `/se
 
 Report: sessions synced just now, the `pending` count remaining, and `last_error` if non-empty.
 
+**The current session is never among them.** Sync works from finished sessions, and this one has no end time until it ends — its time posts automatically at `SessionEnd`, seconds later. So "0 synced" here is the normal, healthy answer when the only outstanding work is the conversation you are in; say so rather than reporting it as nothing happening.
+
 ## Interpreting errors
 
 `last_error` and log lines carry an HTTP status. Translate it for the user:
 
 - **401** — the API token is invalid or expired. Re-run `/session-tracker:sync-setup` to save a fresh token.
 - **404** — the instance URL or organization id is wrong. Re-run `/session-tracker:sync-setup` with the correct values.
+- **`lock held, skipping run`** — another sync (the one SessionStart launches in the background) is already running. Not an error and nothing is lost; wait a few seconds and run again.
+- **`ERROR curl not found`** — this machine has no `curl`, which the sync client requires. Install it; nothing syncs until then.
+- **`no events.log (session dir gone?)`** — that session's directory was deleted before its time was posted, so it is written off permanently. Only a concern if it repeats.
 - **Timeout / connection failure** (no HTTP status, or a network error) — the Solidtime instance is unreachable. Nothing is lost: brackets stay in the local ledger and sync automatically the next time a session ends, on the next session start, or on the next `/session-tracker:sync`.
 - Any other status — show the raw log line; it carries a truncated response body that usually explains the failure.
 
