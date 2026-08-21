@@ -50,4 +50,16 @@ lines=$(wc -l < "$LOG" | tr -d ' ')
 assert_eq "log rotated under 300" "1" "$([ "$lines" -lt 300 ] && echo 1 || echo 0)"
 assert_eq "rotation kept newest" "1" "$(grep -c 'line 599' "$LOG")"
 
+# bare --session with no value terminates
+out="$(timeout 5 bash "$SYNC" --session 2>&1)"; rc=$?
+assert_eq "bare --session terminates" "0" "$rc"
+assert_eq "bare --session no output" "" "$out"
+
+# unreadable config (chmod 000) exits 0 silently
+chmod 000 "$SE/solidtime.conf"
+out="$(bash "$SYNC" 2>&1)"; rc=$?
+assert_eq "unreadable config exits 0" "0" "$rc"
+assert_eq "unreadable config silent" "" "$out"
+chmod 600 "$SE/solidtime.conf"
+
 finish

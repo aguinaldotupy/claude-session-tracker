@@ -22,7 +22,7 @@ VERBOSE=0
 ONLY_SID=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --session) ONLY_SID="${2:-}"; shift 2 ;;
+    --session) ONLY_SID="${2:-}"; if [ $# -ge 2 ]; then shift 2; else shift; fi ;;
     --verbose) VERBOSE=1; shift ;;
     *) shift ;;
   esac
@@ -50,8 +50,9 @@ _sl_rotate() {
 
 # No config → silently inactive. This is the supported "feature off" state.
 [ -f "$_SL_CONF" ] || exit 0
+[ -r "$_SL_CONF" ] || exit 0
 # shellcheck source=/dev/null
-. "$_SL_CONF"
+. "$_SL_CONF" 2>/dev/null || exit 0
 if [ -z "${SOLIDTIME_URL:-}" ] || [ -z "${SOLIDTIME_TOKEN:-}" ] || [ -z "${SOLIDTIME_ORG_ID:-}" ]; then
   _sl_rotate; _sl_log "ERROR config incomplete: need SOLIDTIME_URL, SOLIDTIME_TOKEN, SOLIDTIME_ORG_ID"
   exit 0
