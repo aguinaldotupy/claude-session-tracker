@@ -71,4 +71,10 @@ scalar_out="$(printf "$mixed" | active 120 5000)"
 sum_out="$(printf "$mixed" | awk -v grace=120 -v t_end=5000 -v mode=brackets -f "$AWK" | awk '{s+=$2-$1} END{printf "%d", s+0}')"
 assert_eq "brackets sum equals scalar" "$scalar_out" "$sum_out"
 
+# Out-of-order input: brackets clamped to chronological non-overlapping pairs
+assert_eq "brackets: out-of-order" "1000 1060;1060 1070;" "$(printf 'P 1000\nS 1060\nP 1050\nS 1070\n' | brackets 120 1070)"
+
+# Zero-width bracket after clamp is dropped; only valid bracket emitted
+assert_eq "brackets: zero-width" "1000 1005;" "$(printf 'P 1000\nS 1000\nP 1000\nS 1005\n' | brackets 120 1005)"
+
 finish

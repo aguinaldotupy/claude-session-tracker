@@ -16,7 +16,18 @@
 #          engagement bracket, one pair per line)
 #
 # Prints active seconds (integer, scalar mode) or start/end pairs (brackets mode).
-BEGIN { open = -1; last_stop = -1; bstart = -1; active = 0; if (grace == "" || grace + 0 <= 0) grace = 120 }
+BEGIN { open = -1; last_stop = -1; bstart = -1; active = 0; last_emit_end = 0; if (grace == "" || grace + 0 <= 0) grace = 120 }
+
+function emit_bracket(s, e) {
+  if (mode == "brackets") {
+    if (s < last_emit_end) s = last_emit_end
+    if (e > s) {
+      printf "%d %d\n", s, e
+      last_emit_end = e
+    }
+  }
+}
+
 { kind = $1; ts = $2 + 0 }
 kind == "P" || kind == "T" || kind == "D" || kind == "DF" {
   if (last_stop >= 0) {
@@ -24,7 +35,7 @@ kind == "P" || kind == "T" || kind == "D" || kind == "DF" {
     if (gap < 0) gap = 0
     credit = (gap < grace ? gap : grace)
     active += credit
-    if (mode == "brackets" && bstart >= 0) printf "%d %d\n", bstart, last_stop + credit
+    emit_bracket(bstart, last_stop + credit)
     bstart = -1
     last_stop = -1
   }
@@ -45,13 +56,13 @@ END {
   if (open >= 0) {
     d = t_end - open
     if (d > 0) active += d
-    if (mode == "brackets" && bstart >= 0 && t_end > bstart) printf "%d %d\n", bstart, t_end
+    emit_bracket(bstart, t_end)
   } else if (last_stop >= 0) {
     gap = t_end - last_stop
     if (gap < 0) gap = 0
     credit = (gap < grace ? gap : grace)
     active += credit
-    if (mode == "brackets" && bstart >= 0) printf "%d %d\n", bstart, last_stop + credit
+    emit_bracket(bstart, last_stop + credit)
   }
   if (active < 0) active = 0
   if (mode != "brackets") printf "%d", active
