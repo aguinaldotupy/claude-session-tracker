@@ -213,4 +213,18 @@ assert_eq "member_id cache hit: only the entry POST" "1" "$(wc -l < "$CURL_CAPTU
 sed 's/^SOLIDTIME_MEMBER_ID=.*/SOLIDTIME_MEMBER_ID=member-1/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"
 mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
 
+# ---- discovery: ended sessions without 'done' get synced ----
+. "$DIR/../hooks/lib/db.sh"
+st_db_init
+st_upsert_session "disc-1" "/p/x" "/p/x" "" "" 100 200 100 80 20 "exit" 201
+st_upsert_session "disc-2" "/p/x" "/p/x" "" "" 100 300 200 90 110 "exit" 301
+mkdir -p "$SE/disc-1" "$SE/disc-2"
+printf 'P 100\nS 160\n' > "$SE/disc-1/events.log"
+printf 'P 100\nS 260\n' > "$SE/disc-2/events.log"
+printf '0\ndone\n' > "$SE/disc-2/solidtime-synced"   # already complete
+: > "$CURL_CAPTURE"; : > "$CURL_CTRL"
+bash "$SYNC" >/dev/null 2>&1
+assert_eq "discovery syncs only pending" "1" "$(grep -c 'disc' "$CURL_CAPTURE" | tr -d ' ')"
+assert_eq "disc-1 now done" "1" "$(grep -cx done "$SE/disc-1/solidtime-synced")"
+
 finish

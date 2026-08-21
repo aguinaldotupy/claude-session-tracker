@@ -77,6 +77,9 @@ set -uo pipefail
     st_db_init 2>/dev/null || true
     if st_upsert_session "$SESSION_ID" "$PROJECT_ROOT" "$CWD" "$BRANCH" "$ISSUE_KEY" \
          "$START_TS" "$END_TS" "$DURATION" "$ACTIVE_SECONDS" "$IDLE_SECONDS" "$REASON" "$NOW"; then
+      if [ -f "$HOME/.claude/session-env/solidtime.conf" ]; then
+        ( bash "$HOME/.claude/session-env/solidtime-sync.sh" --session "$SESSION_ID" >/dev/null 2>&1 & ) 2>/dev/null || true
+      fi
       exit 0
     fi
   fi

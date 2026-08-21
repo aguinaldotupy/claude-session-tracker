@@ -35,6 +35,7 @@ echo '{"session_id":"dep-1","source":"startup"}' | bash "$ROOT/hooks/session-sta
 DEST="$TMP/.claude/session-env"
 assert_eq "db.sh deployed" "yes" "$([ -f "$DEST/db.sh" ] && echo yes || echo no)"
 assert_eq "session-query.sh deployed" "yes" "$([ -f "$DEST/session-query.sh" ] && echo yes || echo no)"
+assert_eq "solidtime-sync.sh deployed" "yes" "$([ -f "$DEST/solidtime-sync.sh" ] && echo yes || echo no)"
 assert_eq "deployed session-query runs" "0" "$(bash "$DEST/session-query.sh" status --session none | jq -e . >/dev/null 2>&1; echo $?)"
 
 finish

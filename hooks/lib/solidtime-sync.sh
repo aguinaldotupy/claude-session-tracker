@@ -242,8 +242,24 @@ EOF
   return 0
 }
 
+_sl_pending_sids() {
+  if command -v st_has_sqlite >/dev/null 2>&1 && st_has_sqlite && [ -f "$(st_db_path)" ]; then
+    sqlite3 "$(st_db_path)" "SELECT session_id FROM sessions ORDER BY end_ts;" 2>/dev/null
+  elif [ -f "$_SL_ENV/history.jsonl" ]; then
+    jq -r '.session_id' "$_SL_ENV/history.jsonl" 2>/dev/null | sort -u
+  fi
+}
+
 if [ -n "$ONLY_SID" ]; then
   _sl_sync_session "$ONLY_SID" || true
+else
+  while IFS= read -r sid; do
+    [ -z "$sid" ] && continue
+    grep -q '^done$' "$_SL_ENV/$sid/solidtime-synced" 2>/dev/null && continue
+    _sl_sync_session "$sid" || true
+  done <<EOF
+$(_sl_pending_sids)
+EOF
 fi
 
 _sl_log "sync run end"

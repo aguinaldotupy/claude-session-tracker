@@ -60,4 +60,27 @@ assert_eq "fallback wrote jsonl" "yes" "$([ -f "$TMP/.claude/session-env/history
 assert_eq "fallback jsonl active_seconds correct" "180" "$(jq -r 'select(.session_id=="'"$SIDF"'") | .active_seconds' "$TMP/.claude/session-env/history.jsonl")"
 assert_eq "fallback jsonl idle = duration - active" "yes" "$(jq -r 'select(.session_id=="'"$SIDF"'") | (if .idle_seconds == .duration_seconds - .active_seconds then "yes" else "no" end)' "$TMP/.claude/session-env/history.jsonl")"
 
+# --- Solidtime background launch: hook returns fast, sync runs async ---
+SIDL="solidtime-launch-1"; SDL="$TMP/.claude/session-env/$SIDL"; mkdir -p "$SDL"
+echo "5000" > "$SDL/session-tracker"
+printf 'P 5000\nS 5060\n' > "$SDL/events.log"
+cat > "$TMP/.claude/session-env/solidtime.conf" <<'EOF'
+SOLIDTIME_URL=https://time.test
+EOF
+cat > "$TMP/.claude/session-env/solidtime-sync.sh" <<'STUB'
+#!/usr/bin/env bash
+sleep 0.3
+touch "$HOME/launched"
+STUB
+chmod +x "$TMP/.claude/session-env/solidtime-sync.sh"
+
+SECONDS=0
+echo '{"session_id":"'"$SIDL"'","reason":"exit","cwd":"'"$TMP"'"}' | bash "$ROOT/hooks/session-end.sh" >/dev/null
+ELAPSED=$SECONDS
+assert_eq "hook returns fast" "yes" "$([ "$ELAPSED" -lt 2 ] && echo yes || echo no)"
+
+i=0
+while [ $i -lt 20 ] && [ ! -f "$TMP/launched" ]; do sleep 0.1; i=$((i + 1)); done
+assert_eq "solidtime-sync launched in background" "yes" "$([ -f "$TMP/launched" ] && echo yes || echo no)"
+
 finish

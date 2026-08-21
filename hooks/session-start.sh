@@ -28,13 +28,18 @@ fi
 # Deploy read-side libs to a stable, plugin-independent path so the statusline
 # and skills (which run outside the plugin dir) can source/invoke them.
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
-for f in active-time.awk db.sh session-query.sh; do
+for f in active-time.awk db.sh session-query.sh solidtime-sync.sh; do
   [ -f "$LIB_DIR/$f" ] && cp -f "$LIB_DIR/$f" "$HOME/.claude/session-env/$f" 2>/dev/null || true
 done
 
 # Create timestamp on new/cleared sessions, or if file is missing (e.g. plugin installed after session started)
 if [ "$SOURCE" = "startup" ] || [ "$SOURCE" = "clear" ] || [ ! -f "$SESSION_FILE" ]; then
   echo "$(date +%s)" > "$SESSION_FILE"
+fi
+
+# Retry any pending Solidtime syncs in the background; never blocks the hook.
+if [ -f "$HOME/.claude/session-env/solidtime.conf" ]; then
+  ( bash "$HOME/.claude/session-env/solidtime-sync.sh" >/dev/null 2>&1 & ) 2>/dev/null || true
 fi
 
 echo "CLAUDE_SESSION_FILE=$SESSION_FILE"
