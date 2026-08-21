@@ -187,12 +187,13 @@ not needed for member_id but confirms the token is valid.
 (int), `archived` (`true`|`false`|`all`, default excludes archived). No
 name filter — the resolver must list-and-scan.
 Response: `{"data": [ProjectResource, ...], "links": {...}, "meta": {...}}`
-(paginated). **Default page size is 15**
-(`config('app.pagination_per_page_default')`, default `15`, source
-`config/app.php`). An org with more than 15 projects will not have all of
-them returned by a single unpaged GET — a risk for Task 6's
-list-then-find-by-name resolver (it can create a duplicate project if the
-existing one is on page 2+). Flagged under Deltas below; not fixed here
+(paginated). **Live correction (measured against app.solidtime.io,
+2026-08-21): `meta.per_page` is 500, not the 15 the config default
+suggested** — the same holds for the tags endpoint. An org would need
+500+ projects (or tags) before a single unpaged GET truncates, so the
+duplicate-creation risk in the list-then-find-by-name resolver is far
+smaller than first assessed, though not zero. Flagged under Deltas below;
+not fixed here
 (field-name/path scope only).
 
 **`POST /v1/organizations/{organization}/projects`** — full path

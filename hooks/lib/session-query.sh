@@ -52,20 +52,36 @@ EOF
   fi
   tsecs="$(_sq_int "$tsecs")"; tcount="$(_sq_int "$tcount")"
   local sync_conf=false sync_pending=0 sync_err=""
-  if [ -f "$HOME/.claude/session-env/solidtime.conf" ] || [ -n "${SOLIDTIME_URL:-}" ]; then
+  local senv="$HOME/.claude/session-env"
+  if [ -f "$senv/solidtime.conf" ] || [ -n "${SOLIDTIME_URL:-}" ]; then
     sync_conf=true
-    # Last 30 days only: this runs on every statusline render, and one grep per
-    # session row would grow without bound over the life of the store.
-    local psid cutoff
-    while IFS= read -r psid; do
-      [ -z "$psid" ] && continue
-      grep -q '^done$' "$HOME/.claude/session-env/$psid/solidtime-synced" 2>/dev/null || sync_pending=$((sync_pending + 1))
-    done <<EOF
-$(cutoff=$((now - 2592000))
-  if [ "$src" = sqlite ]; then sqlite3 "$(st_db_path)" "SELECT session_id FROM sessions WHERE end_ts >= $cutoff;" 2>/dev/null
-  elif [ "$src" = jsonl ]; then jq -r --argjson c "$cutoff" 'select(.end_ts >= $c) | .session_id' "$(_sq_hist)" 2>/dev/null | sort -u; fi)
-EOF
-    sync_err="$(grep ' ERROR ' "$HOME/.claude/session-env/solidtime-sync.log" 2>/dev/null | tail -n1)"
+    # Candidate window: last 30 days (this runs on every statusline render) AND
+    # at or after the sync watermark — discovery never posts sessions that ended
+    # before sync was configured, so counting those would pin `pending` above
+    # zero forever and make a healthy sync look permanently stuck.
+    local cutoff since sids total done_n
+    cutoff=$((now - 2592000))
+    since="$(_sq_int "$(head -n1 "$senv/solidtime-since" 2>/dev/null | tr -d '[:space:]')")"
+    [ "$since" -gt "$cutoff" ] && cutoff="$since"
+    sids=""
+    if [ "$src" = sqlite ]; then
+      sids="$(sqlite3 "$(st_db_path)" "SELECT session_id FROM sessions WHERE end_ts >= $cutoff;" 2>/dev/null)"
+    elif [ "$src" = jsonl ]; then
+      sids="$(jq -r --argjson c "$cutoff" 'select(.end_ts >= $c) | .session_id' "$(_sq_hist)" 2>/dev/null | sort -u)"
+    fi
+    if [ -n "$sids" ]; then
+      # One grep over all ledgers, not one fork per session row: a busy month is
+      # hundreds of sessions and the statusline re-renders constantly.
+      total="$(printf '%s\n' "$sids" | grep -c .)"
+      done_n="$(printf '%s\n' "$sids" | awk -v d="$senv/" '{print d $0 "/solidtime-synced"}' \
+                 | tr '\n' '\0' | xargs -0 grep -lx done 2>/dev/null | grep -c .)"
+      sync_pending=$((total - done_n))
+      [ "$sync_pending" -lt 0 ] && sync_pending=0
+    fi
+    # Only errors from the most recent run: an ERROR a later successful run has
+    # already moved past must not stay pinned in the statusline forever.
+    sync_err="$(awk '/sync run start/{e=""} / ERROR /{e=$0} END{if (e != "") print e}' \
+                  "$senv/solidtime-sync.log" 2>/dev/null)"
   fi
   jq -n --arg source "$src" --argjson elapsed "$live_elapsed" --argjson active "$live_active" \
         --argjson started "$start_ts" --arg issue "$issue" --argjson tsecs "$tsecs" --argjson tcount "$tcount" \

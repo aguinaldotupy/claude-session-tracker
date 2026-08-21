@@ -50,6 +50,25 @@ out="$(bash "$SQ" status --session none)"
 assert_eq "sync configured" "true" "$(printf '%s' "$out" | jq -r '.sync.configured')"
 assert_eq "sync pending counts unsynced" "2" "$(printf '%s' "$out" | jq -r '.sync.pending')"
 assert_eq "sync last error surfaced" "1" "$(printf '%s' "$out" | jq -r '.sync.last_error' | grep -c 'HTTP 500')"
+
+# a session with a 'done' ledger stops counting as pending
+mkdir -p "$HOME/.claude/session-env/s1"
+printf '100 200\ndone\n' > "$HOME/.claude/session-env/s1/solidtime-synced"
+out="$(bash "$SQ" status --session none)"
+assert_eq "sync pending drops for done ledger" "1" "$(printf '%s' "$out" | jq -r '.sync.pending')"
+
+# an error a later run already moved past must not stay pinned forever
+printf '2026-08-21T11:00:00 sync run start (session=auto)\n2026-08-21T11:00:01 sync run end\n' \
+  >> "$HOME/.claude/session-env/solidtime-sync.log"
+out="$(bash "$SQ" status --session none)"
+assert_eq "sync error cleared by later clean run" "" "$(printf '%s' "$out" | jq -r '.sync.last_error')"
+
+# sessions that ended before the sync watermark are never discoverable, so they
+# must not be counted pending (otherwise a healthy sync reads as stuck forever)
+printf '%s\n' "$((TODAY + 60))" > "$HOME/.claude/session-env/solidtime-since"
+out="$(bash "$SQ" status --session none)"
+assert_eq "sync pending ignores pre-watermark sessions" "0" "$(printf '%s' "$out" | jq -r '.sync.pending')"
+rm -f "$HOME/.claude/session-env/solidtime-since"
 rm -f "$HOME/.claude/session-env/solidtime.conf"
 
 # sync configured via env var alone (no file) -- ephemeral-environment fallback

@@ -13,7 +13,7 @@ Runs the Solidtime sync client and reports sync health — same behavior as `/se
 
 ## Usage
 
-1. If `~/.claude/session-env/solidtime.conf` doesn't exist, tell the user sync isn't configured and point them at `/session-tracker:sync-setup`. Stop.
+1. If `~/.claude/session-env/solidtime.conf` doesn't exist **and** `SOLIDTIME_URL` is unset (the env-var config mode), tell the user sync isn't configured and point them at `/session-tracker:sync-setup`. Stop.
 2. Run:
    ```bash
    bash "$HOME/.claude/session-env/solidtime-sync.sh" --verbose

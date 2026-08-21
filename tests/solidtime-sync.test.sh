@@ -114,8 +114,8 @@ export SESSION_IDLE_THRESHOLD_SECONDS=60
 
 bash "$SYNC" --session "$SID" >/dev/null 2>&1
 assert_eq "two entries posted" "2" "$(wc -l < "$CURL_CAPTURE" | tr -d ' ')"
-assert_eq "ledger complete" "0
-1
+assert_eq "ledger complete" "1000 1160
+1300 1420
 done" "$(cat "$SE/$SID/solidtime-synced")"
 assert_eq "payload has iso start" "1" "$(grep -c '1970-01-01T00:16:40Z' "$CURL_CAPTURE")"
 assert_eq "auth header sent" "2" "$(grep -c 'Bearer secret-token-123' "$CURL_CAPTURE")"
@@ -137,12 +137,12 @@ bash "$SYNC" --session "$SID" >/dev/null 2>&1
 assert_eq "resume: only new brackets posted" "2" "$(wc -l < "$CURL_CAPTURE" | tr -d ' ')"
 # duplicate 'done' lines are harmless (ruling); the prior "done session
 # skipped" run already appended one extra 'done' before this resume.
-assert_eq "resume: ledger has 0-3 plus done" "0
-1
+assert_eq "resume: ledger has all four brackets plus done" "1000 1160
+1300 1420
 done
 done
-2
-3
+1500 1620
+1700 1820
 done" "$(cat "$SE/$SID/solidtime-synced")"
 
 # mid-batch failure: second call 500 -> ledger stops, log has status, resume completes
@@ -151,12 +151,12 @@ mkdir -p "$SE/$SID2"
 printf 'P 2000\nS 2100\nP 2300\nS 2360\n' > "$SE/$SID2/events.log"
 : > "$CURL_CAPTURE"; printf '200\n500\n' > "$CURL_CTRL"
 bash "$SYNC" --session "$SID2" >/dev/null 2>&1
-assert_eq "fail: only first in ledger" "0" "$(cat "$SE/$SID2/solidtime-synced")"
+assert_eq "fail: only first in ledger" "2000 2160" "$(cat "$SE/$SID2/solidtime-synced")"
 assert_eq "fail: 500 logged" "1" "$(grep -c 'ERROR .*500' "$LOG")"
 : > "$CURL_CAPTURE"; : > "$CURL_CTRL"
 bash "$SYNC" --session "$SID2" >/dev/null 2>&1
 assert_eq "resume: posts only remainder" "1" "$(wc -l < "$CURL_CAPTURE" | tr -d ' ')"
-assert_eq "resume: ledger complete" "1
+assert_eq "resume: ledger complete" "2300 2420
 done" "$(sed -n '2,3p' "$SE/$SID2/solidtime-synced")"
 unset SESSION_IDLE_THRESHOLD_SECONDS
 
@@ -210,7 +210,7 @@ printf 'P 7000\nS 7100\n' > "$SE/$SID10/events.log"
 printf 'A-99\n' > "$SE/$SID10/issue-tag"
 : > "$CURL_CAPTURE"; printf '500\n500\n500\n500\n200\n' > "$CURL_CTRL"
 ( cd "$TMP" && mkdir -p repo3 && cd repo3 && bash "$SYNC" --session "$SID10" ) >/dev/null 2>&1
-assert_eq "resolve-fail: entry still posts (ledger done)" "0
+assert_eq "resolve-fail: entry still posts (ledger done)" "7000 7220
 done" "$(cat "$SE/$SID10/solidtime-synced")"
 assert_eq "resolve-fail: no project_id on wire" "0" "$(grep -c 'project_id' "$CURL_CAPTURE")"
 assert_eq "resolve-fail: no tags array on wire" "0" "$(grep -c '\"tags\":\[' "$CURL_CAPTURE")"
@@ -229,7 +229,7 @@ printf 'P 7200\nS 7300\n' > "$SE/$SID11/events.log"
 printf 'A-100\n' > "$SE/$SID11/issue-tag"
 : > "$CURL_CAPTURE"; printf '500\n500\n500\n500\n200\n' > "$CURL_CTRL"
 ( cd "$TMP" && mkdir -p repo4 && cd repo4 && bash "$SYNC" --session "$SID11" --verbose ) >/dev/null 2>&1
-assert_eq "resolve-fail verbose: entry still posts (ledger done)" "0
+assert_eq "resolve-fail verbose: entry still posts (ledger done)" "7200 7420
 done" "$(cat "$SE/$SID11/solidtime-synced")"
 assert_eq "resolve-fail verbose: no ERROR leaked into project_id" "0" "$(grep -c 'project_id":"ERROR' "$CURL_CAPTURE")"
 assert_eq "resolve-fail verbose: no ERROR leaked into tags" "0" "$(grep -c '\"tags\":\[\"ERROR' "$CURL_CAPTURE")"
@@ -307,6 +307,21 @@ printf 'P 1000\nT 1100 Bash\n' > "$SE/disc-open/events.log"
 bash "$SYNC" >/dev/null 2>&1
 assert_eq "open bracket starts at first prompt" "1" "$(grep -c '1970-01-01T00:16:40Z' "$CURL_CAPTURE")"
 assert_eq "open bracket ends at recorded end_ts" "1" "$(grep -c '1970-01-01T00:20:00Z' "$CURL_CAPTURE")"
+
+# ...and when that still-open bracket GROWS after a resume (same bracket start,
+# later end), the un-posted tail must still be sent. Keyed by bracket ordinal
+# this looked "already synced" and every resumed second was dropped.
+printf 'D 2000 Bash\nS 2100\n' >> "$SE/disc-open/events.log"
+st_upsert_session "disc-open" "/p/x" "/p/x" "" "" 1000 2200 1200 1200 0 "exit" 2201
+: > "$CURL_CAPTURE"
+bash "$SYNC" --session "disc-open" >/dev/null 2>&1
+assert_eq "grown bracket: continuation starts at posted end" "1" "$(grep -c '"start":"1970-01-01T00:20:00Z"' "$CURL_CAPTURE")"
+assert_eq "grown bracket: continuation ends at new end" "1" "$(grep -c '"end":"1970-01-01T00:36:40Z"' "$CURL_CAPTURE")"
+assert_eq "grown bracket: ledger records the new end" "1" "$(grep -cx '1000 2200' "$SE/disc-open/solidtime-synced")"
+# re-running now that nothing grew posts nothing
+: > "$CURL_CAPTURE"
+bash "$SYNC" --session "disc-open" >/dev/null 2>&1
+assert_eq "unchanged bracket: nothing re-posted" "0" "$(grep -c 'time-entries' "$CURL_CAPTURE")"
 
 # ---- no backfill: a session that ended before the sync watermark is never
 # discovered (enabling sync must not dump months of local history) ----

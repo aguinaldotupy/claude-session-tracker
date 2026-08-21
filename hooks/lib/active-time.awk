@@ -16,7 +16,7 @@
 #          engagement bracket, one pair per line)
 #
 # Prints active seconds (integer, scalar mode) or start/end pairs (brackets mode).
-BEGIN { open = -1; last_stop = -1; bstart = -1; active = 0; last_emit_end = 0; if (grace == "" || grace + 0 <= 0) grace = 120 }
+BEGIN { open = -1; last_stop = -1; bstart = -1; bstop = -1; active = 0; last_emit_end = 0; if (grace == "" || grace + 0 <= 0) grace = 120 }
 
 function emit_bracket(s, e) {
   if (mode == "brackets") {
@@ -39,8 +39,13 @@ kind == "P" || kind == "T" || kind == "D" || kind == "DF" {
     if (gap < 0) gap = 0
     credit = (gap < grace ? gap : grace)
     active += credit
-    emit_bracket(bstart, last_stop + credit)
+    # bstop, not last_stop: on back-to-back stops (SF then S) the engagement
+    # closed at the first one, and only the grace tail after the last one is
+    # credited to `active` -- ending the bracket at last_stop would bill the
+    # dead span between the two stops that `active` never counted.
+    emit_bracket(bstart, bstop + credit)
     bstart = -1
+    bstop = -1
     last_stop = -1
   }
   if (open < 0) open = ts
@@ -53,6 +58,7 @@ kind == "S" || kind == "SF" {
     if (d > 0) active += d
     open = -1
   }
+  if (bstop < 0) bstop = ts
   last_stop = ts
   next
 }
@@ -66,7 +72,7 @@ END {
     if (gap < 0) gap = 0
     credit = (gap < grace ? gap : grace)
     active += credit
-    emit_bracket(bstart, last_stop + credit)
+    emit_bracket(bstart, bstop + credit)
   }
   if (active < 0) active = 0
   if (mode != "brackets") printf "%d", active

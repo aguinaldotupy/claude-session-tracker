@@ -12,7 +12,7 @@ None.
 
 ## Behavior
 
-1. If `~/.claude/session-env/solidtime.conf` does not exist, tell the user sync isn't configured yet and point them at `/session-tracker:sync-setup`. Stop.
+1. If `~/.claude/session-env/solidtime.conf` does not exist **and** `SOLIDTIME_URL` is not set in the environment (the env-var config mode for ephemeral hosts), tell the user sync isn't configured yet and point them at `/session-tracker:sync-setup`. Stop.
 2. Run the sync client in verbose mode and show its output:
    ```bash
    bash ~/.claude/session-env/solidtime-sync.sh --verbose
@@ -31,7 +31,7 @@ None.
 ## Implementation hint
 
 ```bash
-if [ ! -f "$HOME/.claude/session-env/solidtime.conf" ]; then
+if [ ! -f "$HOME/.claude/session-env/solidtime.conf" ] && [ -z "${SOLIDTIME_URL:-}" ]; then
   echo "Sync isn't configured yet - run /session-tracker:sync-setup"
   exit 0
 fi

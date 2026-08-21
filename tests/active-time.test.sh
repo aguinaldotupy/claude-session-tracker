@@ -82,4 +82,13 @@ assert_eq "brackets: leading stop then prompt" "1100 1200;" "$(printf 'S 1060\nP
 # Zero-width bracket after clamp is dropped; only valid bracket emitted
 assert_eq "brackets: zero-width" "1000 1005;" "$(printf 'P 1000\nS 1000\nP 1000\nS 1005\n' | brackets 120 1005)"
 
+# Back-to-back stops (StopFailure then Stop, no prompt between): the engagement
+# closed at the FIRST stop, and the scalar only credits grace after the LAST, so
+# the bracket must end at first_stop+credit — ending it at the last stop would
+# bill the dead span between the two stops that active time never counted.
+consec='P 1000\nSF 1100\nS 1150\n'
+assert_eq "brackets: consecutive stops" "1000 1150;" "$(printf "$consec" | brackets 120 1200)"
+assert_eq "brackets sum equals scalar (consecutive stops)" "$(printf "$consec" | active 120 1200)" \
+  "$(printf "$consec" | awk -v grace=120 -v t_end=1200 -v mode=brackets -f "$AWK" | awk '{s+=$2-$1} END{printf "%d", s+0}')"
+
 finish

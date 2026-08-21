@@ -31,10 +31,12 @@ actually happened.
 
 ## Agreed follow-ups (post-v1, in priority order)
 
-1. **Pagination on project/tag list GETs** — the API returns 15 items per
-   page; an active user's issue-key tags exceed that within months, at which
-   point a cold cache on a second machine re-creates page-2+ tags. A small
-   `page=` loop in `_sl_resolve` fixes it.
+1. **Pagination on project/tag list GETs** — a cold cache on a second
+   machine can re-create an entity that sits past the first page. Lower
+   priority than first assessed: the live API returns `per_page: 500`
+   (measured 2026-08-21), not the 15 the Laravel config default implied,
+   so this needs 500+ tags or projects in one organization to bite. A small
+   `page=` loop in `_sl_resolve` fixes it when it matters.
 2. **Synchronous sync mode for ephemeral hosts** — an opt-in mode where VM
    teardown would otherwise race the background sync. (The env-var config
    fallback this item originally bundled shipped 2026-08-21; see
@@ -109,9 +111,13 @@ remains a soft dependency).
 
 **Idempotency without server support.** Solidtime's API has no idempotency
 key, so replay protection is a local ledger:
-`~/.claude/session-env/<session_id>/solidtime-synced` — one line per bracket
-index appended *after* that entry is accepted (2xx), plus a final `done`
-line. A retry resumes at the first unposted bracket. Concurrent runs are
+`~/.claude/session-env/<session_id>/solidtime-synced` — one `<start> <end>`
+line per bracket appended *after* that entry is accepted (2xx), plus a final
+`done` line. A retry resumes at the first unposted bracket. The key is the
+bracket's *start* epoch, not its ordinal: a bracket's end is not stable across
+a resume (a session that ended with an engagement still open absorbs every
+resumed event into the same bracket), so a bracket that grew posts only the
+continuation `[posted_end, new_end]`. Concurrent runs are
 serialized with a `mkdir`-based lock (portable; no `flock` on macOS); a stale
 lock older than 10 minutes is broken.
 

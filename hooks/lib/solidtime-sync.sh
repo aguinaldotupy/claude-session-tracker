@@ -240,6 +240,10 @@ _sl_resolve_member() {
 
 # POST one time entry. Args: start_iso end_iso description project_id tag_id
 # Prints HTTP code; body (for error logging) lands in $_SL_BODY.
+# Deliberately no curl --retry: creates are not idempotent server-side, and
+# curl retries 5xx/timeouts -- a request the server accepted but whose reply
+# was lost would be re-sent as a second time entry. Transient failures are
+# retried at the next trigger instead (nothing is written to the ledger).
 _SL_BODY=""
 _sl_post_entry() {
   local start="$1" end="$2" desc="$3" proj="$4" tag="$5"
@@ -260,7 +264,7 @@ _sl_post_entry() {
     -H "Authorization: Bearer $SOLIDTIME_TOKEN" \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
-    --connect-timeout 5 --max-time 30 --retry 2 --retry-delay 2 \
+    --connect-timeout 5 --max-time 30 \
     -d "$payload" 2>/dev/null)"
   _SL_BODY="$(head -c 300 "$bodyf" 2>/dev/null | tr -d '\n')"
   rm -f "$bodyf"
@@ -273,7 +277,11 @@ _sl_session_project() {
   local sid="$1" name=""
   if command -v st_has_sqlite >/dev/null 2>&1 && st_has_sqlite && [ -f "$(st_db_path)" ]; then
     name="$(sqlite3 "$(st_db_path)" "SELECT COALESCE(p.name, '') FROM sessions s LEFT JOIN projects p ON p.id=s.project_id WHERE s.session_id='$(st_sql_escape "$sid")';" 2>/dev/null)"
-  elif [ -f "$_SL_ENV/history.jsonl" ]; then
+  fi
+  # Not `elif`: both stores can coexist (a SessionEnd whose sqlite upsert failed
+  # appends to history.jsonl even though history.db exists), so a miss in one
+  # must still consult the other.
+  if [ -z "$name" ] && [ -f "$_SL_ENV/history.jsonl" ]; then
     name="$(jq -r --arg s "$sid" 'select(.session_id==$s) | .project_dir' "$_SL_ENV/history.jsonl" 2>/dev/null | tail -n1 | awk -F/ '{print $NF}')"
   fi
   [ -n "$name" ] && printf '%s' "$name" || basename "${PWD:-unknown}"
@@ -288,7 +296,11 @@ _sl_session_end_ts() {
   local sid="$1" ts=""
   if command -v st_has_sqlite >/dev/null 2>&1 && st_has_sqlite && [ -f "$(st_db_path)" ]; then
     ts="$(sqlite3 "$(st_db_path)" "SELECT COALESCE(end_ts,'') FROM sessions WHERE session_id='$(st_sql_escape "$sid")';" 2>/dev/null)"
-  elif [ -f "$_SL_ENV/history.jsonl" ]; then
+  fi
+  # Not `elif`: a session whose sqlite upsert failed lives only in the JSONL
+  # even on a host that has history.db. Missing it here would silently fall
+  # back to `now` and post a multi-day entry on a delayed retry.
+  if [ -z "$ts" ] && [ -f "$_SL_ENV/history.jsonl" ]; then
     ts="$(jq -r --arg s "$sid" 'select(.session_id==$s) | .end_ts' "$_SL_ENV/history.jsonl" 2>/dev/null | tail -n1)"
   fi
   case "$ts" in ''|*[!0-9]*) date +%s ;; *) printf '%s' "$ts" ;; esac
@@ -297,9 +309,17 @@ _sl_session_end_ts() {
 # Sync one finished session: post every bracket not yet in the ledger.
 # Args: sid [force] -- force (used only by the explicit --session path) skips
 # the 'done' short-circuit so a session resumed after a prior sync still
-# posts its new post-resume brackets (session_id is stable across resume;
-# prefix brackets are deterministic so grep -qx "$idx" below still skips
-# ones already posted). Discovery (no --session) keeps the cheap prefilter.
+# posts its new post-resume brackets (session_id is stable across resume).
+# Discovery (no --session) keeps the cheap prefilter.
+#
+# Ledger lines are "<bracket_start> <bracket_end>" epochs, NOT ordinals: a
+# bracket's END is not stable across a resume. A session that ended with an
+# engagement still open (quit mid-response: last event T/D with no S) has its
+# final bracket recorded as [start, end_ts]; when the session is resumed the
+# same bracket absorbs every resumed event and grows. Keyed by ordinal, that
+# bracket looked "already posted" and all resumed work was dropped. Keyed by
+# start, a grown bracket posts a continuation entry [posted_end, new_end], so
+# the total still equals the session's active seconds.
 _sl_sync_session() {
   local sid="$1" force="${2:-}"
   local sdir="$_SL_ENV/$sid" ledger events issue host proj tag
@@ -325,25 +345,30 @@ _sl_sync_session() {
   host="$(hostname 2>/dev/null || echo unknown)"
   proj="$(_sl_resolve_project "$(_sl_session_project "$sid")")"
   tag=""; [ -n "$issue" ] && tag="$(_sl_resolve_tag "$issue")"
-  local now idx=0 start end code
+  local now idx=0 posted=0 start end from prev code
   now="$(_sl_session_end_ts "$sid")"
   while read -r start end; do
     [ -z "$start" ] && continue
-    if ! grep -qx "$idx" "$ledger" 2>/dev/null; then
-      code="$(_sl_post_entry "$(_sl_iso8601 "$start")" "$(_sl_iso8601 "$end")" \
-                "$host · ${sid%%-*}:${idx}" "$proj" "$tag")"
-      case "$code" in
-        2*) printf '%s\n' "$idx" >> "$ledger" ;;
-        *)  _sl_log "ERROR session $sid bracket $idx: HTTP $code ${_SL_BODY}"; return 1 ;;
-      esac
+    # Last end already posted for this bracket start, if any.
+    prev="$(grep "^$start " "$ledger" 2>/dev/null | tail -n1 | cut -d' ' -f2)"
+    from="$start"
+    if [ -n "$prev" ]; then
+      [ "$prev" -ge "$end" ] && { idx=$((idx + 1)); continue; }
+      from="$prev"   # bracket grew after a resume: post only the new tail
     fi
+    code="$(_sl_post_entry "$(_sl_iso8601 "$from")" "$(_sl_iso8601 "$end")" \
+              "$host · ${sid%%-*}:${idx}" "$proj" "$tag")"
+    case "$code" in
+      2*) printf '%s %s\n' "$start" "$end" >> "$ledger"; posted=$((posted + 1)) ;;
+      *)  _sl_log "ERROR session $sid bracket $idx: HTTP $code ${_SL_BODY}"; return 1 ;;
+    esac
     idx=$((idx + 1))
   done <<EOF
 $(awk -v grace="${SESSION_IDLE_THRESHOLD_SECONDS:-120}" -v t_end="$now" -v mode=brackets \
      -f "$_SL_ENV/active-time.awk" "$events" 2>/dev/null)
 EOF
   printf 'done\n' >> "$ledger"
-  _sl_log "session $sid: synced $idx brackets"
+  _sl_log "session $sid: synced $posted brackets"
   return 0
 }
 
@@ -351,11 +376,17 @@ EOF
 # watermark. Without the filter, enabling sync on a host with months of local
 # history would post every one of those sessions to Solidtime on the first run.
 _sl_pending_sids() {
-  if command -v st_has_sqlite >/dev/null 2>&1 && st_has_sqlite && [ -f "$(st_db_path)" ]; then
-    sqlite3 "$(st_db_path)" "SELECT session_id FROM sessions WHERE end_ts >= $_SL_SINCE ORDER BY end_ts;" 2>/dev/null
-  elif [ -f "$_SL_ENV/history.jsonl" ]; then
-    jq -r --argjson since "$_SL_SINCE" 'select(.end_ts >= $since) | .session_id' "$_SL_ENV/history.jsonl" 2>/dev/null | sort -u
-  fi
+  # Union, not either/or: both stores can hold sessions at once (a SessionEnd
+  # whose sqlite upsert failed appends to history.jsonl even on a host that has
+  # history.db) and a JSONL-only session must still be discoverable.
+  {
+    if command -v st_has_sqlite >/dev/null 2>&1 && st_has_sqlite && [ -f "$(st_db_path)" ]; then
+      sqlite3 "$(st_db_path)" "SELECT session_id FROM sessions WHERE end_ts >= $_SL_SINCE ORDER BY end_ts;" 2>/dev/null
+    fi
+    if [ -f "$_SL_ENV/history.jsonl" ]; then
+      jq -r --argjson since "$_SL_SINCE" 'select(.end_ts >= $since) | .session_id' "$_SL_ENV/history.jsonl" 2>/dev/null
+    fi
+  } | awk 'NF && !seen[$0]++'
 }
 
 if [ -n "$ONLY_SID" ]; then
