@@ -51,9 +51,23 @@ EOF
     tcount="$(jq -s 'map(select((.start_ts|strflocaltime("%Y-%m-%d"))==(now|strflocaltime("%Y-%m-%d")))) | group_by(.session_id) | length' "$(_sq_hist)" 2>/dev/null)"
   fi
   tsecs="$(_sq_int "$tsecs")"; tcount="$(_sq_int "$tcount")"
+  local sync_conf=false sync_pending=0 sync_err=""
+  if [ -f "$HOME/.claude/session-env/solidtime.conf" ]; then
+    sync_conf=true
+    local psid
+    while IFS= read -r psid; do
+      [ -z "$psid" ] && continue
+      grep -q '^done$' "$HOME/.claude/session-env/$psid/solidtime-synced" 2>/dev/null || sync_pending=$((sync_pending + 1))
+    done <<EOF
+$(if [ "$src" = sqlite ]; then sqlite3 "$(st_db_path)" "SELECT session_id FROM sessions;" 2>/dev/null
+  elif [ "$src" = jsonl ]; then jq -r '.session_id' "$(_sq_hist)" 2>/dev/null | sort -u; fi)
+EOF
+    sync_err="$(grep ' ERROR ' "$HOME/.claude/session-env/solidtime-sync.log" 2>/dev/null | tail -n1)"
+  fi
   jq -n --arg source "$src" --argjson elapsed "$live_elapsed" --argjson active "$live_active" \
         --argjson started "$start_ts" --arg issue "$issue" --argjson tsecs "$tsecs" --argjson tcount "$tcount" \
-    '{source:$source, live:{elapsed_seconds:$elapsed, active_seconds:$active, started_at:$started, issue_key:$issue}, today:{active_seconds:$tsecs, sessions:$tcount}}'
+        --argjson sconf "$sync_conf" --argjson spend "$sync_pending" --arg serr "$sync_err" \
+    '{source:$source, live:{elapsed_seconds:$elapsed, active_seconds:$active, started_at:$started, issue_key:$issue}, today:{active_seconds:$tsecs, sessions:$tcount}, sync:{configured:$sconf, pending:$spend, last_error:$serr}}'
 }
 
 # SQL WHERE fragment (on start_ts) for a --range value. Portable: SQLite date().

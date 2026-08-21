@@ -38,6 +38,20 @@ assert_eq "sid fallback to CLAUDE_CODE_SESSION_ID" "1000" "$(printf '%s' "$out" 
 out="$(CLAUDE_SESSION_ID="$SID" CLAUDE_CODE_SESSION_ID=other bash "$SQ" status)"
 assert_eq "CLAUDE_SESSION_ID wins over CLAUDE_CODE_SESSION_ID" "1000" "$(printf '%s' "$out" | jq -r .live.started_at)"
 
+# --- sync status ---
+# sync status: unconfigured
+out="$(bash "$SQ" status --session none)"
+assert_eq "sync unconfigured" "false" "$(printf '%s' "$out" | jq -r '.sync.configured')"
+
+# configured with one pending session and one error line
+printf 'SOLIDTIME_URL=x\nSOLIDTIME_TOKEN=y\nSOLIDTIME_ORG_ID=z\n' > "$HOME/.claude/session-env/solidtime.conf"
+printf '2026-08-21T10:00:00 ERROR session s1 bracket 0: HTTP 500\n' > "$HOME/.claude/session-env/solidtime-sync.log"
+out="$(bash "$SQ" status --session none)"
+assert_eq "sync configured" "true" "$(printf '%s' "$out" | jq -r '.sync.configured')"
+assert_eq "sync pending counts unsynced" "2" "$(printf '%s' "$out" | jq -r '.sync.pending')"
+assert_eq "sync last error surfaced" "1" "$(printf '%s' "$out" | jq -r '.sync.last_error' | grep -c 'HTTP 500')"
+rm -f "$HOME/.claude/session-env/solidtime.conf"
+
 # --- history ---
 # s1 has issue A-1; s2 only a branch → branch_issue falls back to branch
 outh="$(bash "$SQ" history --range today --project a)"
