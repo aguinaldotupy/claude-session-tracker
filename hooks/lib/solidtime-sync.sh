@@ -22,6 +22,9 @@ _SL_API_ME="api/v1/users/me"
 # member_id is required on time-entry create; this is how to discover it
 # for a given org (see notes file "member_id" section).
 _SL_API_MEMBERSHIPS="api/v1/users/me/memberships"
+# ProjectStoreRequest requires color + is_billable; fixed default (not
+# user-configurable, no product need for it to be).
+_SL_PROJECT_COLOR="#2563eb"
 
 VERBOSE=0
 ONLY_SID=""
@@ -82,9 +85,78 @@ trap 'rmdir "$_SL_LOCK" 2>/dev/null' EXIT
 
 _sl_log "sync run start (session=${ONLY_SID:-auto})"
 
-# Placeholder resolvers until the cache task lands: no project/tag ids.
-_sl_resolve_project() { printf ''; }
-_sl_resolve_tag() { printf ''; }
+_sl_cache_get() { jq -r --arg k "$2" ".$1[\$k] // empty" "$_SL_CACHE" 2>/dev/null; }
+_sl_cache_put() {
+  local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/slcache.XXXXXX")"
+  jq --arg k "$2" --arg v "$3" ".$1[\$k] = \$v" "$_SL_CACHE" 2>/dev/null > "$tmp" \
+    || jq -n --arg k "$2" --arg v "$3" "{projects:{},tags:{}} | .$1[\$k] = \$v" > "$tmp"
+  mv "$tmp" "$_SL_CACHE"
+}
+_sl_cache_get_member() { jq -r '.member_id // empty' "$_SL_CACHE" 2>/dev/null; }
+_sl_cache_put_member() {
+  local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/slcache.XXXXXX")"
+  jq --arg v "$1" '.member_id = $v' "$_SL_CACHE" 2>/dev/null > "$tmp" \
+    || jq -n --arg v "$1" '{projects:{},tags:{},member_id:$v}' > "$tmp"
+  mv "$tmp" "$_SL_CACHE"
+}
+
+# GET list, find by name; POST create on miss. Args: kind(projects|tags) api_fmt name
+_sl_resolve() {
+  local kind="$1" fmt="$2" name="$3" id url bodyf code payload
+  [ -z "$name" ] && return 0
+  id="$(_sl_cache_get "$kind" "$name")"
+  if [ -n "$id" ]; then printf '%s' "$id"; return 0; fi
+  # shellcheck disable=SC2059
+  url="${SOLIDTIME_URL%/}/$(printf "$fmt" "$SOLIDTIME_ORG_ID")"
+  bodyf="$(mktemp "${TMPDIR:-/tmp}/slbody.XXXXXX")"
+  code="$(curl -sS -o "$bodyf" -w '%{http_code}' \
+    -H "Authorization: Bearer $SOLIDTIME_TOKEN" -H "Accept: application/json" \
+    --connect-timeout 5 --max-time 15 "$url" 2>/dev/null)"
+  case "$code" in 2*) id="$(jq -r --arg n "$name" '.data[]? | select(.name==$n) | .id' "$bodyf" 2>/dev/null | head -n1)" ;; esac
+  if [ -z "$id" ]; then
+    # ProjectStoreRequest requires color + is_billable (verified API delta);
+    # TagStoreRequest needs name only.
+    if [ "$kind" = "projects" ]; then
+      payload="$(jq -n --arg n "$name" --arg c "$_SL_PROJECT_COLOR" '{name:$n, color:$c, is_billable:false}')"
+    else
+      payload="$(jq -n --arg n "$name" '{name:$n}')"
+    fi
+    code="$(curl -sS -o "$bodyf" -w '%{http_code}' -X POST "$url" \
+      -H "Authorization: Bearer $SOLIDTIME_TOKEN" -H "Content-Type: application/json" -H "Accept: application/json" \
+      --connect-timeout 5 --max-time 15 \
+      -d "$payload" 2>/dev/null)"
+    case "$code" in 2*) id="$(jq -r '.data.id // empty' "$bodyf" 2>/dev/null)" ;;
+      *) _sl_log "ERROR resolve $kind '$name': HTTP $code $(head -c 200 "$bodyf" | tr -d '\n')" ;;
+    esac
+  fi
+  rm -f "$bodyf"
+  [ -n "$id" ] && _sl_cache_put "$kind" "$name" "$id" && printf '%s' "$id"
+  return 0
+}
+
+_sl_resolve_project() { _sl_resolve projects "$_SL_API_PROJECTS" "$1"; }
+_sl_resolve_tag()     { _sl_resolve tags     "$_SL_API_TAGS"     "$1"; }
+
+# member_id: config wins; else cache; else GET memberships and match this
+# session's org id (controller ruling, Task 6). Empty on any failure --
+# _sl_sync_session treats that as fatal (member_id is required on every
+# time-entry create call). Never writes $_SL_CONF -- only the local cache.
+_sl_resolve_member() {
+  local id url bodyf code
+  if [ -n "${SOLIDTIME_MEMBER_ID:-}" ]; then printf '%s' "$SOLIDTIME_MEMBER_ID"; return 0; fi
+  id="$(_sl_cache_get_member)"
+  if [ -n "$id" ]; then printf '%s' "$id"; return 0; fi
+  url="${SOLIDTIME_URL%/}/$_SL_API_MEMBERSHIPS"
+  bodyf="$(mktemp "${TMPDIR:-/tmp}/slbody.XXXXXX")"
+  code="$(curl -sS -o "$bodyf" -w '%{http_code}' \
+    -H "Authorization: Bearer $SOLIDTIME_TOKEN" -H "Accept: application/json" \
+    --connect-timeout 5 --max-time 15 "$url" 2>/dev/null)"
+  case "$code" in 2*) id="$(jq -r --arg org "$SOLIDTIME_ORG_ID" '.data[]? | select(.organization.id==$org) | .id' "$bodyf" 2>/dev/null | head -n1)" ;; esac
+  rm -f "$bodyf"
+  [ -n "$id" ] && _sl_cache_put_member "$id"
+  printf '%s' "$id"
+  return 0
+}
 
 # POST one time entry. Args: start_iso end_iso description project_id tag_id
 # Prints HTTP code; body (for error logging) lands in $_SL_BODY.
@@ -135,8 +207,11 @@ _sl_sync_session() {
   [ -f "$events" ] || { _sl_log "session $sid: no events.log, skipping"; return 0; }
   grep -q '^done$' "$ledger" 2>/dev/null && return 0
   # member_id is required on every time-entry create call (API delta over the
-  # design draft). No runtime auto-resolution here (later task); fail loudly
-  # and do not post anything for this session.
+  # design draft). SOLIDTIME_MEMBER_ID from config wins if set; otherwise
+  # auto-resolve via GET memberships and cache the result (controller
+  # ruling, Task 6). Still fail loudly and post nothing if that also comes
+  # up empty.
+  SOLIDTIME_MEMBER_ID="$(_sl_resolve_member)"
   if [ -z "${SOLIDTIME_MEMBER_ID:-}" ]; then
     _sl_log "ERROR member_id missing (set SOLIDTIME_MEMBER_ID or run sync-setup)"
     return 1

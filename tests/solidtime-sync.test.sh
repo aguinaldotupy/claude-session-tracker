@@ -68,20 +68,36 @@ BIN="$TMP/bin"; mkdir -p "$BIN"
 cat > "$BIN/curl" <<'SHIM'
 #!/usr/bin/env bash
 # Records each invocation; behavior driven by $CURL_CTRL: line N = HTTP code
-# for call N (default 200). Body output is {"data":{"id":"e1"}}.
+# for call N (default 200). Body varies by request kind: -X POST (create) ->
+# {"data":{"id":"new-1"}}; GET .../memberships -> a membership list matching
+# org "org-1"; any other GET (list) -> {"data":[{"id":"p1","name":"repo"}]}.
 echo "$@" >> "$CURL_CAPTURE"
 n=$(wc -l < "$CURL_CAPTURE" | tr -d ' ')
 code=$(sed -n "${n}p" "$CURL_CTRL" 2>/dev/null); code=${code:-200}
 # emulate: curl -s -o BODYFILE -w '%{http_code}'
 out=""; prev=""
 for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
-[ -n "$out" ] && printf '{"data":{"id":"e1"}}' > "$out"
+if printf '%s' "$*" | grep -q -- '-X POST'; then
+  [ -n "$out" ] && printf '{"data":{"id":"new-1"}}' > "$out"
+elif printf '%s' "$*" | grep -q -- '/memberships'; then
+  [ -n "$out" ] && printf '{"data":[{"id":"member-auto","organization":{"id":"org-1"}}]}' > "$out"
+else
+  [ -n "$out" ] && printf '{"data":[{"id":"p1","name":"repo"}]}' > "$out"
+fi
 printf '%s' "$code"
 SHIM
 chmod +x "$BIN/curl"
 export CURL_CAPTURE="$TMP/curl.log" CURL_CTRL="$TMP/curl.ctrl"
 : > "$CURL_CAPTURE"; : > "$CURL_CTRL"
 export PATH="$BIN:$PATH"
+
+# Task 6: real _sl_resolve_project/_sl_resolve_tag are now live for every
+# --session run below, not just the project/tag-cache tests further down.
+# Pre-seed the cache so the pre-existing posting-flow tests (written before
+# real resolvers existed) see cache hits and keep their exact curl-call
+# counts instead of picking up extra list/create calls.
+PROJNAME="$(basename "$PWD")"
+printf '{"projects":{"%s":"proj-1"},"tags":{"A-7":"tag-1"}}\n' "$PROJNAME" > "$SE/solidtime-cache.json"
 
 # a finished session with two brackets: [1000,1100] and [1300,1420]
 SID="sess-post"
@@ -120,18 +136,62 @@ assert_eq "resume: ledger complete" "1
 done" "$(sed -n '2,3p' "$SE/$SID2/solidtime-synced")"
 unset SESSION_IDLE_THRESHOLD_SECONDS
 
-# member_id missing (API delta: required on every time-entry create) -> sync
-# fails for that session before posting anything, with no ledger written.
+# member_id missing from conf (API delta: required on every time-entry
+# create). Task 6 controller ruling: _sl_resolve_member auto-resolves via
+# GET memberships before giving up -- here that lookup itself fails (HTTP
+# 500), so no id is found and sync still fails for the session before
+# posting anything, with no ledger written.
 SID3="sess-nomember"
 mkdir -p "$SE/$SID3"
 printf 'P 3000\nS 3060\n' > "$SE/$SID3/events.log"
 sed 's/^SOLIDTIME_MEMBER_ID=.*/SOLIDTIME_MEMBER_ID=/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"
 mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
-: > "$CURL_CAPTURE"
+: > "$CURL_CAPTURE"; printf '500\n' > "$CURL_CTRL"
 bash "$SYNC" --session "$SID3" >/dev/null 2>&1
-assert_eq "member_id missing: no posts" "0" "$(wc -l < "$CURL_CAPTURE" | tr -d ' ')"
+assert_eq "member_id missing: auto-resolve attempted, no entry posts" "1" "$(wc -l < "$CURL_CAPTURE" | tr -d ' ')"
 assert_eq "member_id missing: error logged" "1" "$(grep -c 'ERROR member_id missing' "$LOG")"
 assert_eq "member_id missing: no ledger" "0" "$([ -f "$SE/$SID3/solidtime-synced" ] && echo 1 || echo 0)"
+: > "$CURL_CTRL"
+sed 's/^SOLIDTIME_MEMBER_ID=.*/SOLIDTIME_MEMBER_ID=member-1/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"
+mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
+
+# ---- project/tag cache ----
+rm -f "$SE/solidtime-cache.json"
+: > "$CURL_CAPTURE"; : > "$CURL_CTRL"
+SID6="sess-proj"; mkdir -p "$SE/$SID6"
+printf 'P 3000\nS 3100\n' > "$SE/$SID6/events.log"
+printf 'A-9\n' > "$SE/$SID6/issue-tag"
+( cd "$TMP" && mkdir -p repo && cd repo && bash "$SYNC" --session "$SID6" ) >/dev/null 2>&1
+assert_eq "cache file created" "1" "$([ -f "$SE/solidtime-cache.json" ] && echo 1 || echo 0)"
+assert_eq "project id cached" "p1" "$(jq -r '.projects.repo' "$SE/solidtime-cache.json")"
+assert_eq "tag id cached" "new-1" "$(jq -r '.tags["A-9"]' "$SE/solidtime-cache.json")"
+assert_eq "tags field on wire" "1" "$(grep -c '\"tags\":\[\"new-1\"\]' "$CURL_CAPTURE")"
+
+# second session, same project + tag: no extra list/create calls (cache hit)
+SID7="sess-proj2"; mkdir -p "$SE/$SID7"
+printf 'P 4000\nS 4100\n' > "$SE/$SID7/events.log"
+printf 'A-9\n' > "$SE/$SID7/issue-tag"
+: > "$CURL_CAPTURE"
+( cd "$TMP/repo" && bash "$SYNC" --session "$SID7" ) >/dev/null 2>&1
+assert_eq "cache hit: only the entry POST" "1" "$(wc -l < "$CURL_CAPTURE" | tr -d ' ')"
+
+# ---- member_id auto-resolve (SOLIDTIME_MEMBER_ID absent from conf) ----
+sed 's/^SOLIDTIME_MEMBER_ID=.*/SOLIDTIME_MEMBER_ID=/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"
+mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
+SID8="sess-member-auto"; mkdir -p "$SE/$SID8"
+printf 'P 6000\nS 6100\n' > "$SE/$SID8/events.log"
+: > "$CURL_CAPTURE"; : > "$CURL_CTRL"
+( cd "$TMP/repo" && bash "$SYNC" --session "$SID8" ) >/dev/null 2>&1
+assert_eq "member_id auto-resolve + entry: 2 calls" "2" "$(wc -l < "$CURL_CAPTURE" | tr -d ' ')"
+assert_eq "auto-resolved member on wire" "1" "$(grep -c '\"member_id\":\"member-auto\"' "$CURL_CAPTURE")"
+assert_eq "member_id cached" "member-auto" "$(jq -r '.member_id' "$SE/solidtime-cache.json")"
+
+# second session: member_id now cached -> no membership call, only entry POST
+SID9="sess-member-auto2"; mkdir -p "$SE/$SID9"
+printf 'P 6200\nS 6260\n' > "$SE/$SID9/events.log"
+: > "$CURL_CAPTURE"
+( cd "$TMP/repo" && bash "$SYNC" --session "$SID9" ) >/dev/null 2>&1
+assert_eq "member_id cache hit: only the entry POST" "1" "$(wc -l < "$CURL_CAPTURE" | tr -d ' ')"
 sed 's/^SOLIDTIME_MEMBER_ID=.*/SOLIDTIME_MEMBER_ID=member-1/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"
 mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
 
