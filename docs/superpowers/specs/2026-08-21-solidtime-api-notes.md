@@ -331,6 +331,14 @@ is covered) + `config/app.php`.
    bracket timestamps, `project_id`, ISO 8601 UTC timestamp format,
    `Authorization: Bearer` header, response envelope `{"data": ...}` with
    `id` at the top level) is confirmed correct as designed.
+7. **Cloud requires `client_id` present (null accepted) on project
+   create**, contradicting this doc's own "no delta" reading of
+   `ProjectStoreRequest` above (`client_id` listed as not-required, which
+   is true for *nullability* but not for *key presence*): a live POST
+   without the `client_id` key 422s with `{"errors":{"client_id":["The
+   client id field must be present."]}}`. `null` is accepted. Found via
+   live E2E against app.solidtime.io, 2026-08-21. Tag create needs no such
+   key (verified 201 with `{"name": ...}` only, as documented above).
 
 ## Constants change
 

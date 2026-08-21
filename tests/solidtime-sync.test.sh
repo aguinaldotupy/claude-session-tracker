@@ -217,6 +217,38 @@ assert_eq "resolve-fail: no tags array on wire" "0" "$(grep -c '\"tags\":\[' "$C
 assert_eq "resolve-fail: ERROR resolve logged" "2" "$(grep -c 'ERROR resolve' "$LOG")"
 : > "$CURL_CTRL"
 
+# ---- same resolve-failure scenario, but --verbose (regression: _sl_log's
+# verbose echo used to go to stdout, so when a resolver failed inside its
+# $(...) capture, the ERROR log line itself became the "id" -- e.g.
+# project_id ended up holding the literal error string, which the live
+# server rejected with a 422). Fresh project name so cache can't
+# short-circuit; entry must still post cleanly with no leaked ERROR text
+# anywhere in the payload. ----
+SID11="sess-resolve-fail-verbose"; mkdir -p "$SE/$SID11"
+printf 'P 7200\nS 7300\n' > "$SE/$SID11/events.log"
+printf 'A-100\n' > "$SE/$SID11/issue-tag"
+: > "$CURL_CAPTURE"; printf '500\n500\n500\n500\n200\n' > "$CURL_CTRL"
+( cd "$TMP" && mkdir -p repo4 && cd repo4 && bash "$SYNC" --session "$SID11" --verbose ) >/dev/null 2>&1
+assert_eq "resolve-fail verbose: entry still posts (ledger done)" "0
+done" "$(cat "$SE/$SID11/solidtime-synced")"
+assert_eq "resolve-fail verbose: no ERROR leaked into project_id" "0" "$(grep -c 'project_id":"ERROR' "$CURL_CAPTURE")"
+assert_eq "resolve-fail verbose: no ERROR leaked into tags" "0" "$(grep -c '\"tags\":\[\"ERROR' "$CURL_CAPTURE")"
+assert_eq "resolve-fail verbose: entry POST still succeeded" "1" "$(grep -c -- '-X POST.*time-entries' "$CURL_CAPTURE")"
+: > "$CURL_CTRL"
+
+# ---- project create payload: client_id must be PRESENT (null accepted).
+# Cloud API 422s with "The client id field must be present." when the key
+# is omitted entirely (verified live E2E against app.solidtime.io,
+# 2026-08-21). A fresh project name that doesn't match the shim's generic
+# "repo" GET response forces a GET-miss -> POST-create, so the create
+# payload lands on the wire to inspect. ----
+SID12="sess-proj-create"; mkdir -p "$SE/$SID12"
+printf 'P 8000\nS 8060\n' > "$SE/$SID12/events.log"
+: > "$CURL_CAPTURE"; : > "$CURL_CTRL"
+( cd "$TMP" && mkdir -p newproj && cd newproj && bash "$SYNC" --session "$SID12" ) >/dev/null 2>&1
+assert_eq "project create: client_id present and null" "1" "$(grep -c '\"client_id\":null' "$CURL_CAPTURE")"
+assert_eq "project create: is_billable still on wire" "1" "$(grep -c '\"is_billable\":false' "$CURL_CAPTURE")"
+
 # ---- member_id auto-resolve (SOLIDTIME_MEMBER_ID absent from conf) ----
 sed 's/^SOLIDTIME_MEMBER_ID=.*/SOLIDTIME_MEMBER_ID=/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"
 mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"

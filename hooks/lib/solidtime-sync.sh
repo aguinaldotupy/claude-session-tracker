@@ -39,7 +39,11 @@ done
 
 _sl_log() {
   printf '%s %s\n' "$(date +'%Y-%m-%dT%H:%M:%S')" "$*" >> "$_SL_LOG"
-  [ "$VERBOSE" = 1 ] && printf '%s\n' "$*"
+  # stderr, never stdout: resolvers (_sl_resolve_project/_sl_resolve_tag/
+  # _sl_resolve_member) are invoked via command substitution and their
+  # stdout IS the returned id -- an echo here would get captured as part
+  # of that value on failure (e.g. project_id becoming the error string).
+  [ "$VERBOSE" = 1 ] && printf '%s\n' "$*" >&2
   return 0
 }
 
@@ -156,7 +160,9 @@ _sl_resolve() {
     # ProjectStoreRequest requires color + is_billable (verified API delta);
     # TagStoreRequest needs name only.
     if [ "$kind" = "projects" ]; then
-      payload="$(jq -nc --arg n "$name" --arg c "$_SL_PROJECT_COLOR" '{name:$n, color:$c, is_billable:false}')"
+      # client_id must be PRESENT (null is accepted) -- confirmed via live
+      # E2E against app.solidtime.io 2026-08-21; omitting it 422s.
+      payload="$(jq -nc --arg n "$name" --arg c "$_SL_PROJECT_COLOR" '{name:$n, color:$c, is_billable:false, client_id:null}')"
     else
       payload="$(jq -nc --arg n "$name" '{name:$n}')"
     fi
