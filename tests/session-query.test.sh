@@ -52,6 +52,12 @@ assert_eq "sync pending counts unsynced" "2" "$(printf '%s' "$out" | jq -r '.syn
 assert_eq "sync last error surfaced" "1" "$(printf '%s' "$out" | jq -r '.sync.last_error' | grep -c 'HTTP 500')"
 rm -f "$HOME/.claude/session-env/solidtime.conf"
 
+# sync configured via env var alone (no file) -- ephemeral-environment fallback
+export SOLIDTIME_URL=https://envtime.test
+out="$(bash "$SQ" status --session none)"
+assert_eq "sync configured via env var (no file)" "true" "$(printf '%s' "$out" | jq -r '.sync.configured')"
+unset SOLIDTIME_URL
+
 # --- history ---
 # s1 has issue A-1; s2 only a branch → branch_issue falls back to branch
 outh="$(bash "$SQ" history --range today --project a)"

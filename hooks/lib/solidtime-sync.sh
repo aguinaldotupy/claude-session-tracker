@@ -94,13 +94,27 @@ _sl_check() {
   return 0
 }
 
-# No config → silently inactive. This is the supported "feature off" state.
-[ -f "$_SL_CONF" ] || exit 0
-[ -r "$_SL_CONF" ] || exit 0
-# shellcheck source=/dev/null
-. "$_SL_CONF" 2>/dev/null || exit 0
+# Config: solidtime.conf wins entirely when present and readable (source it,
+# exactly as before). Otherwise fall back to SOLIDTIME_* already in the
+# environment -- ephemeral hosts (Claude Code cloud, sandbox VMs) that
+# provision secrets as env vars instead of writing a file. An unreadable
+# file stays a silent no-op (not a fallback trigger -- it's a permissions
+# problem, not "absent").
+CONF_SOURCED=0
+if [ -f "$_SL_CONF" ]; then
+  [ -r "$_SL_CONF" ] || exit 0
+  # shellcheck source=/dev/null
+  . "$_SL_CONF" 2>/dev/null || exit 0
+  CONF_SOURCED=1
+fi
 if [ -z "${SOLIDTIME_URL:-}" ] || [ -z "${SOLIDTIME_TOKEN:-}" ] || [ -z "${SOLIDTIME_ORG_ID:-}" ]; then
-  _sl_rotate; _sl_log "ERROR config incomplete: need SOLIDTIME_URL, SOLIDTIME_TOKEN, SOLIDTIME_ORG_ID"
+  # Nothing configured at all (no file, no SOLIDTIME_URL) stays silent --
+  # unrelated environments may define stray vars. A readable-but-incomplete
+  # file, or an env-only setup that got as far as SOLIDTIME_URL, is a real
+  # half-done configuration worth surfacing.
+  if [ "$CONF_SOURCED" = 1 ] || [ -n "${SOLIDTIME_URL:-}" ]; then
+    _sl_rotate; _sl_log "ERROR config incomplete: need SOLIDTIME_URL, SOLIDTIME_TOKEN, SOLIDTIME_ORG_ID"
+  fi
   exit 0
 fi
 

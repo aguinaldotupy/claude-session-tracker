@@ -52,7 +52,7 @@ EOF
   fi
   tsecs="$(_sq_int "$tsecs")"; tcount="$(_sq_int "$tcount")"
   local sync_conf=false sync_pending=0 sync_err=""
-  if [ -f "$HOME/.claude/session-env/solidtime.conf" ]; then
+  if [ -f "$HOME/.claude/session-env/solidtime.conf" ] || [ -n "${SOLIDTIME_URL:-}" ]; then
     sync_conf=true
     local psid
     while IFS= read -r psid; do

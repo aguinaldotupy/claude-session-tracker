@@ -38,7 +38,8 @@ if [ "$SOURCE" = "startup" ] || [ "$SOURCE" = "clear" ] || [ ! -f "$SESSION_FILE
 fi
 
 # Retry any pending Solidtime syncs in the background; never blocks the hook.
-if [ -f "$HOME/.claude/session-env/solidtime.conf" ]; then
+# SOLIDTIME_URL env fallback covers ephemeral hosts without a conf file.
+if [ -f "$HOME/.claude/session-env/solidtime.conf" ] || [ -n "${SOLIDTIME_URL:-}" ]; then
   ( bash "$HOME/.claude/session-env/solidtime-sync.sh" >/dev/null 2>&1 & ) 2>/dev/null || true
 fi
 

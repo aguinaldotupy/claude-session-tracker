@@ -326,4 +326,54 @@ sed 's/^SOLIDTIME_ORG_ID=.*/SOLIDTIME_ORG_ID=org-1/' "$SE/solidtime.conf" > "$SE
 mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
 : > "$CURL_CTRL"
 
+# ---- env-var config fallback (ephemeral environments without solidtime.conf)
+# ---- config precedence: file always wins over conflicting env vars.
+# $SE/solidtime.conf currently holds URL=https://time.test TOKEN=secret-token-123
+# ORG_ID=org-1 MEMBER_ID=member-1 (restored by every prior test section above).
+mv "$SE/solidtime.conf" "$SE/solidtime.conf.bak"
+
+# (a) env-only config: no file, all three required vars exported -> --check
+# runs and hits the API (proves the env values were actually used to reach
+# the network, not just "didn't crash").
+export SOLIDTIME_URL=https://envtime.test SOLIDTIME_TOKEN=env-secret-1 SOLIDTIME_ORG_ID=org-1
+: > "$CURL_CAPTURE"; printf '200\n' > "$CURL_CTRL"; : > "$LOG"
+bash "$SYNC" --check >/dev/null 2>&1
+assert_eq "env-only config: check hits memberships" "1" "$(grep -c 'api/v1/users/me/memberships' "$CURL_CAPTURE")"
+assert_eq "env-only config: env token on wire" "1" "$(grep -c 'Bearer env-secret-1' "$CURL_CAPTURE")"
+unset SOLIDTIME_URL SOLIDTIME_TOKEN SOLIDTIME_ORG_ID
+
+# (c) half-configured env (URL only, no file) -> exit 0 silently on
+# stdout/stderr, but the incompleteness IS logged (a half-configured env is
+# a real mistake worth surfacing, unlike "nothing configured at all").
+export SOLIDTIME_URL=https://envtime.test
+: > "$CURL_CAPTURE"; : > "$LOG"
+out="$(bash "$SYNC" 2>&1)"; rc=$?
+assert_eq "half-configured env exits 0" "0" "$rc"
+assert_eq "half-configured env silent on stdout/stderr" "" "$out"
+assert_eq "half-configured env logs ERROR config incomplete" "1" "$(grep -c 'ERROR config incomplete' "$LOG")"
+assert_eq "half-configured env: no API call" "0" "$(wc -l < "$CURL_CAPTURE" | tr -d ' ')"
+unset SOLIDTIME_URL
+
+# (d) nothing configured at all (still no file, no env) -> fully silent,
+# no log file even created. Guards the pre-existing "no config" behavior
+# survives the env-fallback addition once env vars are properly unset.
+rm -f "$LOG"; : > "$CURL_CAPTURE"
+out="$(bash "$SYNC" 2>&1)"; rc=$?
+assert_eq "nothing configured (no file, no env) exits 0" "0" "$rc"
+assert_eq "nothing configured (no file, no env) silent" "" "$out"
+assert_eq "nothing configured (no file, no env) no log" "0" "$([ -f "$LOG" ] && echo 1 || echo 0)"
+
+# (b) file precedence: restore the file AND export conflicting env vars ->
+# the file's values are what actually go on the wire, not the env's.
+mv "$SE/solidtime.conf.bak" "$SE/solidtime.conf"
+export SOLIDTIME_URL=https://envtime-conflict.test SOLIDTIME_TOKEN=env-secret-conflict SOLIDTIME_ORG_ID=org-conflict
+: > "$CURL_CAPTURE"; printf '200\n' > "$CURL_CTRL"; : > "$LOG"
+bash "$SYNC" --check >/dev/null 2>&1
+assert_eq "file precedence: check hits the file's host" "1" "$(grep -c 'time.test/api/v1/users/me/memberships' "$CURL_CAPTURE")"
+assert_eq "file precedence: env host not used" "0" "$(grep -c 'envtime-conflict.test' "$CURL_CAPTURE")"
+assert_eq "file precedence: file token on wire, not env token" "1" "$(grep -c 'Bearer secret-token-123' "$CURL_CAPTURE")"
+assert_eq "file precedence: env token not on wire" "0" "$(grep -c 'env-secret-conflict' "$CURL_CAPTURE")"
+unset SOLIDTIME_URL SOLIDTIME_TOKEN SOLIDTIME_ORG_ID
+: > "$CURL_CTRL"
+
 finish

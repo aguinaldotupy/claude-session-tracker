@@ -35,12 +35,10 @@ actually happened.
    page; an active user's issue-key tags exceed that within months, at which
    point a cold cache on a second machine re-creates page-2+ tags. A small
    `page=` loop in `_sl_resolve` fixes it.
-2. **Environment-variable config fallback** (approved 2026-08-21): when
-   `solidtime.conf` is absent, read `SOLIDTIME_URL` / `SOLIDTIME_TOKEN` /
-   `SOLIDTIME_ORG_ID` from the environment. Unlocks ephemeral environments
-   (Claude Code cloud, sandbox VMs) where provisioning a file is awkward but
-   secrets-as-env-vars are native. Related: an opt-in synchronous sync mode
-   for ephemeral hosts, where the VM teardown races the background sync.
+2. **Synchronous sync mode for ephemeral hosts** — an opt-in mode where VM
+   teardown would otherwise race the background sync. (The env-var config
+   fallback this item originally bundled shipped 2026-08-21; see
+   Configuration below.)
 3. **JSONL-branch discovery test** — `_sl_pending_sids`' `history.jsonl`
    path is correct (verified manually in review) but has no automated test.
 
@@ -75,6 +73,15 @@ SOLIDTIME_ORG_ID=<organization id>
 - Missing or unreadable config → sync is silently inactive. Nothing else in
   the plugin changes behavior.
 - The token is never written to any log.
+- **Env-var fallback** (implemented 2026-08-21): when `solidtime.conf` is
+  absent, `SOLIDTIME_URL` / `SOLIDTIME_TOKEN` / `SOLIDTIME_ORG_ID` (and
+  optional `SOLIDTIME_MEMBER_ID`) are read from the environment instead —
+  for ephemeral environments (CI, cloud, sandbox VMs) where writing a file
+  is awkward but env secrets are native. The file, when present, always
+  takes precedence over the environment, even if conflicting env vars are
+  also set. A half-configured environment (`SOLIDTIME_URL` set but token or
+  org id missing) still logs the same `ERROR config incomplete` line; a
+  fully absent config (no file, no `SOLIDTIME_URL`) stays silent.
 
 ## Sync flow
 
