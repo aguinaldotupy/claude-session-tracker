@@ -24,16 +24,17 @@ None — this command is interactive. It asks the user for each value in the con
    - `SOLIDTIME_ORG_ID`
    Do not ask for a member id — the sync client resolves and caches it automatically from the memberships API on first run.
 4. Write `~/.claude/session-env/solidtime.conf` with the three `KEY=VALUE` lines and `chmod 600` it. Overwrite any existing file — this command is also how a user rotates a token.
-5. Verify with one real API call — `--check` makes a single `GET /users/me` against the instance instead of a normal sync run (which, with zero ended sessions queued, would make no HTTP call at all and could "verify" a wrong token or org by doing nothing):
+5. Verify with one real API call — `--check` makes a single `GET /users/me/memberships` against the instance instead of a normal sync run (which, with zero ended sessions queued, would make no HTTP call at all and could "verify" a wrong token or org by doing nothing) — and confirms the configured organization id is actually among the token's memberships, not just that the token is valid for *some* org:
    ```bash
    bash ~/.claude/session-env/solidtime-sync.sh --check --verbose
    ```
-   Its output is exactly one line: `credentials OK` (URL, token, and org all reachable) or `credentials FAILED: HTTP <code>`.
+   Its output is exactly one line: `credentials OK` (URL and token reachable, and the org id was found among the token's memberships), `credentials FAILED: org not found` (token valid but not a member of the configured org), or `credentials FAILED: HTTP <code>`.
 6. **Never echo the token back in full.** When confirming what was saved, show only the first 6 characters followed by `...` (e.g. `abc123...`).
 7. Interpret the result:
    - `credentials OK` → configured and verified.
+   - `credentials FAILED: org not found` → org id is wrong (or the token's user isn't a member of it); re-confirm the org id.
    - `credentials FAILED: HTTP 401` → token invalid; ask for a fresh token and rewrite the config.
-   - `credentials FAILED: HTTP 404` → URL or org id is wrong; re-confirm both.
+   - `credentials FAILED: HTTP 404` → URL is wrong; re-confirm it.
    - any other failure (timeout, connection error, other status) → show the raw output and suggest checking the URL is reachable from this machine.
    For more on what an error means, see `/session-tracker:sync` and the `sync` skill.
 

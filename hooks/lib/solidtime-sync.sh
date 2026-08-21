@@ -18,7 +18,6 @@ _SL_CACHE="$_SL_ENV/solidtime-cache.json"
 _SL_API_ENTRIES="api/v1/organizations/%s/time-entries"
 _SL_API_PROJECTS="api/v1/organizations/%s/projects"
 _SL_API_TAGS="api/v1/organizations/%s/tags"
-_SL_API_ME="api/v1/users/me"
 # member_id is required on time-entry create; this is how to discover it
 # for a given org (see notes file "member_id" section).
 _SL_API_MEMBERSHIPS="api/v1/users/me/memberships"
@@ -58,24 +57,33 @@ _sl_rotate() {
   fi
 }
 
-# --check: one real API call (GET /users/me) to prove URL/token/org reach a
+# --check: one real API call (GET memberships) to prove URL/token/org reach a
 # live instance -- unlike a no-op sync run (0 ended sessions => 0 HTTP calls),
-# this always hits the network. Read-only, so it skips the sync lock.
+# this always hits the network. Read-only, so it skips the sync lock. Also
+# confirms the configured org id is actually among this token's memberships
+# (same response shape _sl_resolve_member parses), since a valid token for
+# the wrong org would otherwise look like success.
 _sl_check() {
-  local url bodyf code
-  url="${SOLIDTIME_URL%/}/$_SL_API_ME"
+  local url bodyf code org_found=0
+  url="${SOLIDTIME_URL%/}/$_SL_API_MEMBERSHIPS"
   bodyf="$(mktemp "${TMPDIR:-/tmp}/slbody.XXXXXX")"
   code="$(curl -sS -o "$bodyf" -w '%{http_code}' \
     -H "Authorization: Bearer $SOLIDTIME_TOKEN" -H "Accept: application/json" \
     --connect-timeout 5 --max-time 15 "$url" 2>/dev/null)"
   case "$code" in
-    2*) _sl_log "check: HTTP $code" ;;
+    2*)
+      if jq -e --arg org "$SOLIDTIME_ORG_ID" '.data[]? | select(.organization.id==$org)' "$bodyf" >/dev/null 2>&1; then
+        org_found=1; _sl_log "check: HTTP $code"
+      else
+        _sl_log "ERROR check: HTTP $code org $SOLIDTIME_ORG_ID not found in memberships"
+      fi
+      ;;
     *)  _sl_log "ERROR check: HTTP $code $(head -c 200 "$bodyf" 2>/dev/null | tr -d '\n')" ;;
   esac
   rm -f "$bodyf"
   if [ "$VERBOSE" = 1 ]; then
     case "$code" in
-      2*) printf 'credentials OK\n' ;;
+      2*) if [ "$org_found" = 1 ]; then printf 'credentials OK\n'; else printf 'credentials FAILED: org not found\n'; fi ;;
       *)  printf 'credentials FAILED: HTTP %s\n' "$code" ;;
     esac
   fi
@@ -231,12 +239,22 @@ _sl_session_project() {
 }
 
 # Sync one finished session: post every bracket not yet in the ledger.
+# Args: sid [force] -- force (used only by the explicit --session path) skips
+# the 'done' short-circuit so a session resumed after a prior sync still
+# posts its new post-resume brackets (session_id is stable across resume;
+# prefix brackets are deterministic so grep -qx "$idx" below still skips
+# ones already posted). Discovery (no --session) keeps the cheap prefilter.
 _sl_sync_session() {
-  local sid="$1"
+  local sid="$1" force="${2:-}"
   local sdir="$_SL_ENV/$sid" ledger events issue host proj tag
   events="$sdir/events.log"; ledger="$sdir/solidtime-synced"
-  [ -f "$events" ] || { _sl_log "session $sid: no events.log, skipping"; return 0; }
-  grep -q '^done$' "$ledger" 2>/dev/null && return 0
+  if [ ! -f "$events" ]; then
+    mkdir -p "$sdir"
+    printf 'done\n' >> "$ledger"
+    _sl_log "session $sid: no events.log, marking done"
+    return 0
+  fi
+  [ "$force" = "force" ] || { grep -q '^done$' "$ledger" 2>/dev/null && return 0; }
   # member_id is required on every time-entry create call (API delta over the
   # design draft). SOLIDTIME_MEMBER_ID from config wins if set; otherwise
   # auto-resolve via GET memberships and cache the result (controller
@@ -282,7 +300,7 @@ _sl_pending_sids() {
 }
 
 if [ -n "$ONLY_SID" ]; then
-  _sl_sync_session "$ONLY_SID" || true
+  _sl_sync_session "$ONLY_SID" force || true
 else
   while IFS= read -r sid; do
     [ -z "$sid" ] && continue

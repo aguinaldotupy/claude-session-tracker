@@ -51,8 +51,14 @@ lines=$(wc -l < "$LOG" | tr -d ' ')
 assert_eq "log rotated under 300" "1" "$([ "$lines" -lt 300 ] && echo 1 || echo 0)"
 assert_eq "rotation kept newest" "1" "$(grep -c 'line 599' "$LOG")"
 
-# bare --session with no value terminates
-out="$(timeout 5 bash "$SYNC" --session 2>&1)"; rc=$?
+# bare --session with no value terminates. `timeout` isn't on stock macOS;
+# use it when available as a hang guard, otherwise just run it directly --
+# the hang this guards against is fixed and covered by the arg-parsing loop.
+if command -v timeout >/dev/null 2>&1; then
+  out="$(timeout 5 bash "$SYNC" --session 2>&1)"; rc=$?
+else
+  out="$(bash "$SYNC" --session 2>&1)"; rc=$?
+fi
 assert_eq "bare --session terminates" "0" "$rc"
 assert_eq "bare --session no output" "" "$out"
 
@@ -120,6 +126,24 @@ assert_eq "no tag_ids on wire" "0" "$(grep -c 'tag_ids' "$CURL_CAPTURE")"
 # done session: re-run posts nothing
 bash "$SYNC" --session "$SID" >/dev/null 2>&1
 assert_eq "done session skipped" "2" "$(wc -l < "$CURL_CAPTURE" | tr -d ' ')"
+
+# resume gap (Task 7 finding): a session already synced to 'done' gets two
+# more prompt/stop brackets appended (as happens when it's resumed). An
+# explicit --session run must bypass the 'done' short-circuit and post only
+# the new brackets, since session_id is stable across resume.
+printf 'P 1500\nS 1560\nP 1700\nS 1760\n' >> "$SE/$SID/events.log"
+: > "$CURL_CAPTURE"
+bash "$SYNC" --session "$SID" >/dev/null 2>&1
+assert_eq "resume: only new brackets posted" "2" "$(wc -l < "$CURL_CAPTURE" | tr -d ' ')"
+# duplicate 'done' lines are harmless (ruling); the prior "done session
+# skipped" run already appended one extra 'done' before this resume.
+assert_eq "resume: ledger has 0-3 plus done" "0
+1
+done
+done
+2
+3
+done" "$(cat "$SE/$SID/solidtime-synced")"
 
 # mid-batch failure: second call 500 -> ledger stops, log has status, resume completes
 SID2="sess-fail"
@@ -227,11 +251,24 @@ bash "$SYNC" >/dev/null 2>&1
 assert_eq "discovery syncs only pending" "1" "$(grep -c 'disc' "$CURL_CAPTURE" | tr -d ' ')"
 assert_eq "disc-1 now done" "1" "$(grep -cx done "$SE/disc-1/solidtime-synced")"
 
-# ---- --check: real credential verification (GET /users/me), no session sync ----
+# ---- no-events session (Task 7 finding): DB row with no events.log (e.g.
+# wall-clock fallback, zero prompts) must be marked done, not left pending
+# forever ----
+st_upsert_session "disc-noevents" "/p/x" "/p/x" "" "" 100 400 300 0 0 "exit" 401
+: > "$CURL_CAPTURE"
+bash "$SYNC" >/dev/null 2>&1
+assert_eq "no-events session marked done" "1" "$(grep -cx done "$SE/disc-noevents/solidtime-synced")"
+assert_eq "no-events session: no HTTP call" "0" "$(grep -c 'disc-noevents' "$CURL_CAPTURE")"
+assert_eq "no-events session: logged" "1" "$(grep -c 'session disc-noevents: no events.log, marking done' "$LOG")"
+
+# ---- --check: real credential verification (GET memberships), no session sync ----
+# curl shim already returns a memberships body containing org "org-1" for
+# any GET to /memberships (see shim above); solidtime.conf's SOLIDTIME_ORG_ID
+# is "org-1", so the default shim response is the org-found case.
 : > "$CURL_CAPTURE"; printf '200\n' > "$CURL_CTRL"
 : > "$LOG"
 out="$(bash "$SYNC" --check --verbose 2>&1)"
-assert_eq "check 200: hits /users/me" "1" "$(grep -c 'api/v1/users/me' "$CURL_CAPTURE")"
+assert_eq "check 200: hits memberships" "1" "$(grep -c 'api/v1/users/me/memberships' "$CURL_CAPTURE")"
 assert_eq "check 200: no entry POSTs" "0" "$(grep -c -- '-X POST' "$CURL_CAPTURE")"
 assert_eq "check 200: log line" "1" "$(grep -c 'check: HTTP 200' "$LOG")"
 assert_eq "check 200: verbose credentials OK" "1" "$(printf '%s\n' "$out" | grep -c '^credentials OK$')"
@@ -242,6 +279,19 @@ out="$(bash "$SYNC" --check --verbose 2>&1)"; rc=$?
 assert_eq "check 401: exits 0" "0" "$rc"
 assert_eq "check 401: ERROR log line" "1" "$(grep -c 'ERROR check: HTTP 401' "$LOG")"
 assert_eq "check 401: verbose credentials FAILED" "1" "$(printf '%s\n' "$out" | grep -c '^credentials FAILED: HTTP 401$')"
+: > "$CURL_CTRL"
+
+# ---- --check: 2xx but configured org id isn't among the memberships ----
+sed 's/^SOLIDTIME_ORG_ID=.*/SOLIDTIME_ORG_ID=org-missing/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"
+mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
+: > "$CURL_CAPTURE"; printf '200\n' > "$CURL_CTRL"
+: > "$LOG"
+out="$(bash "$SYNC" --check --verbose 2>&1)"; rc=$?
+assert_eq "check org-missing: exits 0" "0" "$rc"
+assert_eq "check org-missing: ERROR log line" "1" "$(grep -c 'ERROR check: HTTP 200 org org-missing not found' "$LOG")"
+assert_eq "check org-missing: verbose credentials FAILED" "1" "$(printf '%s\n' "$out" | grep -c '^credentials FAILED: org not found$')"
+sed 's/^SOLIDTIME_ORG_ID=.*/SOLIDTIME_ORG_ID=org-1/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"
+mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
 : > "$CURL_CTRL"
 
 finish
