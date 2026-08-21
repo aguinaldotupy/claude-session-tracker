@@ -29,6 +29,21 @@ actually happened.
   possible v2 flag on the manual command).
 - Native Windows remains unsupported (existing plugin boundary).
 
+## Agreed follow-ups (post-v1, in priority order)
+
+1. **Pagination on project/tag list GETs** — the API returns 15 items per
+   page; an active user's issue-key tags exceed that within months, at which
+   point a cold cache on a second machine re-creates page-2+ tags. A small
+   `page=` loop in `_sl_resolve` fixes it.
+2. **Environment-variable config fallback** (approved 2026-08-21): when
+   `solidtime.conf` is absent, read `SOLIDTIME_URL` / `SOLIDTIME_TOKEN` /
+   `SOLIDTIME_ORG_ID` from the environment. Unlocks ephemeral environments
+   (Claude Code cloud, sandbox VMs) where provisioning a file is awkward but
+   secrets-as-env-vars are native. Related: an opt-in synchronous sync mode
+   for ephemeral hosts, where the VM teardown races the background sync.
+3. **JSONL-branch discovery test** — `_sl_pending_sids`' `history.jsonl`
+   path is correct (verified manually in review) but has no automated test.
+
 ## Design decisions already settled
 
 - **Local-first is untouched.** Hooks write to the local store exactly as
