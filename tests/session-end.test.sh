@@ -38,12 +38,12 @@ printf 'P 1000\nT 1005 Read\nD 1040 Read\nS 1060\n' > "$SD/events.log"
 echo '{"session_id":"'"$SIDB"'","reason":"other","cwd":"'"$TMP"'"}' | bash "$ROOT/hooks/session-end.sh" >/dev/null
 DB="$TMP/.claude/session-env/history.db"
 assert_eq "session row written" "1" "$(sqlite3 "$DB" "SELECT COUNT(*) FROM sessions WHERE session_id='$SIDB';")"
-assert_eq "events archived" "4" "$(sqlite3 "$DB" "SELECT COUNT(*) FROM events WHERE session_id='$SIDB';")"
+assert_eq "events not archived (v3.1.2: dropped slow import)" "0" "$(sqlite3 "$DB" "SELECT COUNT(*) FROM events WHERE session_id='$SIDB';")"
 
 # repeated SessionEnd (resume): still one row
 echo '{"session_id":"'"$SIDB"'","reason":"resume","cwd":"'"$TMP"'"}' | bash "$ROOT/hooks/session-end.sh" >/dev/null
 assert_eq "resume keeps one row" "1" "$(sqlite3 "$DB" "SELECT COUNT(*) FROM sessions WHERE session_id='$SIDB';")"
-assert_eq "events not duplicated on resume" "4" "$(sqlite3 "$DB" "SELECT COUNT(*) FROM events WHERE session_id='$SIDB';")"
+assert_eq "events still not archived on resume" "0" "$(sqlite3 "$DB" "SELECT COUNT(*) FROM events WHERE session_id='$SIDB';")"
 
 # fallback: with sqlite3 masked off PATH, SessionEnd appends legacy JSONL
 SIDF="fallback-1"; SDF="$TMP/.claude/session-env/$SIDF"; mkdir -p "$SDF"

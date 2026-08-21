@@ -77,7 +77,6 @@ set -uo pipefail
     st_db_init 2>/dev/null || true
     if st_upsert_session "$SESSION_ID" "$PROJECT_ROOT" "$CWD" "$BRANCH" "$ISSUE_KEY" \
          "$START_TS" "$END_TS" "$DURATION" "$ACTIVE_SECONDS" "$IDLE_SECONDS" "$REASON" "$NOW"; then
-      st_import_events "$SESSION_ID" "$EVENTS_FILE" 2>/dev/null || true
       exit 0
     fi
   fi
