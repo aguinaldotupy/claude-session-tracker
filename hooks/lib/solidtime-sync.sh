@@ -5,8 +5,13 @@
 # stdout/stderr unless --verbose; errors always go to the sync log.
 set -uo pipefail
 
-_SL_ENV="$HOME/.claude/session-env"
-_SL_CONF="$_SL_ENV/solidtime.conf"
+_SL_ENV="${SESSION_TRACKER_HOME:-$HOME/.session-tracker}"
+# db.sh carries the config parser and the store helpers. Sibling first (the repo
+# checkout and the deployed home are both self-contained), deployed copy second.
+_SL_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+. "$_SL_LIB_DIR/db.sh" 2>/dev/null || . "$_SL_ENV/db.sh" 2>/dev/null || true
+_SL_CONF="$_SL_ENV/config.yml"
 _SL_LOG="$_SL_ENV/solidtime-sync.log"
 _SL_LOCK="$_SL_ENV/solidtime-sync.lock"
 _SL_CACHE="$_SL_ENV/solidtime-cache.json"
@@ -98,26 +103,28 @@ _sl_check() {
   return 0
 }
 
-# Config: solidtime.conf wins entirely when present and readable (source it,
-# exactly as before). Otherwise fall back to SOLIDTIME_* already in the
-# environment -- ephemeral hosts (Claude Code cloud, sandbox VMs) that
-# provision secrets as env vars instead of writing a file. An unreadable
-# file stays a silent no-op (not a fallback trigger -- it's a permissions
-# problem, not "absent").
+# Config: config.yml wins entirely when present and readable. Otherwise fall
+# back to SOLIDTIME_* already in the environment -- ephemeral hosts (Claude Code
+# cloud, sandbox VMs) that provision secrets as env vars instead of writing a
+# file. An unreadable file stays a silent no-op (not a fallback trigger -- it's a
+# permissions problem, not "absent").
+#
+# The file is parsed, never sourced: the old solidtime.conf ran as shell, so a
+# `$` in a value expanded (or, under `set -u`, killed this process before
+# anything could be logged) and a Sanctum token's `|` split into a pipeline
+# unless the user quoted it exactly right.
 CONF_SOURCED=0
 if [ -f "$_SL_CONF" ]; then
   if [ ! -r "$_SL_CONF" ]; then
     _sl_rotate; _sl_log "ERROR config unreadable: $_SL_CONF (check permissions)"
     exit 0
   fi
-  # `set +u` around the source: under `set -u` a conf line referencing an unset
-  # variable (e.g. SOLIDTIME_URL="$SOLIDTIME_HOST/api") terminates this shell
-  # outright -- the `||` branch never runs, nothing is logged, and every trigger
-  # dies silently while the statusline still reports sync as configured.
-  set +u
-  # shellcheck source=/dev/null
-  . "$_SL_CONF" 2>/dev/null || { set -u; _sl_rotate; _sl_log "ERROR config failed to parse: $_SL_CONF"; exit 0; }
-  set -u
+  if ! command -v st_config_load >/dev/null 2>&1; then
+    _sl_rotate; _sl_log "ERROR db.sh not found beside solidtime-sync.sh: cannot read $_SL_CONF"
+    exit 0
+  fi
+  st_config_load >/dev/null 2>&1 || {
+    _sl_rotate; _sl_log "ERROR config unreadable: $_SL_CONF (check permissions)"; exit 0; }
   CONF_SOURCED=1
 fi
 if [ -z "${SOLIDTIME_URL:-}" ] || [ -z "${SOLIDTIME_TOKEN:-}" ] || [ -z "${SOLIDTIME_ORG_ID:-}" ]; then
@@ -194,8 +201,6 @@ while ! mkdir "$_SL_LOCK" 2>/dev/null; do
   sleep 2
 done
 trap 'rmdir "$_SL_LOCK" 2>/dev/null' EXIT
-
-. "$_SL_ENV/db.sh" 2>/dev/null || true
 
 _sl_log "sync run start (session=${ONLY_SID:-auto})"
 
@@ -426,7 +431,7 @@ _sl_sync_session() {
     mkdir -p "$sdir"
     printf 'done\n' >> "$ledger"
     # ERROR, not an info line: `done` is the only idempotency key, so this is
-    # irreversible. history.db and ~/.claude/session-env/<sid>/ have independent
+    # irreversible. history.db and <session-tracker home>/<sid>/ have independent
     # lifetimes -- clearing session dirs to reclaim disk, or restoring only the
     # DB into a fresh container, silently writes off every session at once.
     # Surfacing it in `status.sync.last_error` is the only warning the user gets.

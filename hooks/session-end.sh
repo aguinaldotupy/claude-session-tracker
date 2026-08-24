@@ -12,9 +12,10 @@ set -uo pipefail
 
   [ -z "$SESSION_ID" ] && exit 0
 
-  SESSION_DIR="$HOME/.claude/session-env/$SESSION_ID"
+  ST_HOME="${SESSION_TRACKER_HOME:-$HOME/.session-tracker}"
+  SESSION_DIR="$ST_HOME/$SESSION_ID"
   SESSION_FILE="$SESSION_DIR/session-tracker"
-  HISTORY_FILE="$HOME/.claude/session-env/history.jsonl"
+  HISTORY_FILE="$ST_HOME/history.jsonl"
 
   # No recorded start → nothing to log, bail silently.
   [ -f "$SESSION_FILE" ] || exit 0
@@ -76,9 +77,9 @@ set -uo pipefail
   # without a conf file. Fired on both store paths — a host without sqlite3 gets
   # its sessions synced at SessionEnd too, not only on the next SessionStart.
   kick_solidtime_sync() {
-    [ -f "$HOME/.claude/session-env/solidtime-sync.sh" ] || return 0
-    if [ -f "$HOME/.claude/session-env/solidtime.conf" ] || [ -n "${SOLIDTIME_URL:-}" ]; then
-      ( bash "$HOME/.claude/session-env/solidtime-sync.sh" --session "$SESSION_ID" >/dev/null 2>&1 & ) 2>/dev/null || true
+    [ -f "$ST_HOME/solidtime-sync.sh" ] || return 0
+    if [ -f "$ST_HOME/config.yml" ] || [ -n "${SOLIDTIME_URL:-}" ]; then
+      ( bash "$ST_HOME/solidtime-sync.sh" --session "$SESSION_ID" >/dev/null 2>&1 & ) 2>/dev/null || true
     fi
   }
 

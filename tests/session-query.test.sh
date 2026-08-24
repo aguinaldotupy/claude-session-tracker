@@ -7,9 +7,9 @@ SQ="$DIR/../hooks/lib/session-query.sh"
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP"
-mkdir -p "$HOME/.claude/session-env"
+mkdir -p "$HOME/.session-tracker"
 # active-time.awk must be at the deployed path for `status`
-cp "$DIR/../hooks/lib/active-time.awk" "$HOME/.claude/session-env/active-time.awk"
+cp "$DIR/../hooks/lib/active-time.awk" "$HOME/.session-tracker/active-time.awk"
 st_db_init
 
 TODAY=$(date +%s)
@@ -24,7 +24,7 @@ assert_eq "status today total" "300" "$(printf '%s' "$out" | jq -r .today.active
 assert_eq "status today count" "2" "$(printf '%s' "$out" | jq -r .today.sessions)"
 
 # live session: fabricate a session dir with a closed bracket → active 60 + grace 120 = 180
-SID="live-1"; SD="$HOME/.claude/session-env/$SID"; mkdir -p "$SD"
+SID="live-1"; SD="$HOME/.session-tracker/$SID"; mkdir -p "$SD"
 echo "1000" > "$SD/session-tracker"
 printf 'P 1000\nS 1060\n' > "$SD/events.log"
 out="$(bash "$SQ" status --session "$SID")"
@@ -44,8 +44,8 @@ out="$(bash "$SQ" status --session none)"
 assert_eq "sync unconfigured" "false" "$(printf '%s' "$out" | jq -r '.sync.configured')"
 
 # configured, with one error line
-printf 'SOLIDTIME_URL=x\nSOLIDTIME_TOKEN=y\nSOLIDTIME_ORG_ID=z\n' > "$HOME/.claude/session-env/solidtime.conf"
-printf '2026-08-21T10:00:00 ERROR session s1 bracket 0: HTTP 500\n' > "$HOME/.claude/session-env/solidtime-sync.log"
+printf 'solidtime:\n  url: x\n  token: y\n  org_id: z\n' > "$HOME/.session-tracker/config.yml"
+printf '2026-08-21T10:00:00 ERROR session s1 bracket 0: HTTP 500\n' > "$HOME/.session-tracker/solidtime-sync.log"
 out="$(bash "$SQ" status --session none)"
 assert_eq "sync configured" "true" "$(printf '%s' "$out" | jq -r '.sync.configured')"
 assert_eq "sync last error surfaced" "1" "$(printf '%s' "$out" | jq -r '.sync.last_error' | grep -c 'HTTP 500')"
@@ -54,21 +54,21 @@ assert_eq "sync last error surfaced" "1" "$(printf '%s' "$out" | jq -r '.sync.la
 # here by scanning one ledger file per session (that cost ~+35ms on every
 # statusline render, and read "everything in 30 days" before the first sync run).
 assert_eq "sync pending 0 before any run" "0" "$(printf '%s' "$out" | jq -r '.sync.pending')"
-printf '3\n' > "$HOME/.claude/session-env/solidtime-pending"
+printf '3\n' > "$HOME/.session-tracker/solidtime-pending"
 out="$(bash "$SQ" status --session none)"
 assert_eq "sync pending read from published counter" "3" "$(printf '%s' "$out" | jq -r '.sync.pending')"
-printf 'garbage\n' > "$HOME/.claude/session-env/solidtime-pending"
+printf 'garbage\n' > "$HOME/.session-tracker/solidtime-pending"
 out="$(bash "$SQ" status --session none)"
 assert_eq "sync pending non-numeric counter is 0" "0" "$(printf '%s' "$out" | jq -r '.sync.pending')"
-rm -f "$HOME/.claude/session-env/solidtime-pending"
+rm -f "$HOME/.session-tracker/solidtime-pending"
 
 # an error a later run already moved past must not stay pinned forever
 printf '2026-08-21T11:00:00 sync run start (session=auto)\n2026-08-21T11:00:01 sync run end\n' \
-  >> "$HOME/.claude/session-env/solidtime-sync.log"
+  >> "$HOME/.session-tracker/solidtime-sync.log"
 out="$(bash "$SQ" status --session none)"
 assert_eq "sync error cleared by later clean run" "" "$(printf '%s' "$out" | jq -r '.sync.last_error')"
 
-rm -f "$HOME/.claude/session-env/solidtime.conf"
+rm -f "$HOME/.session-tracker/config.yml"
 
 # sync configured via env var alone (no file) -- ephemeral-environment fallback
 export SOLIDTIME_URL=https://envtime.test
@@ -98,7 +98,7 @@ assert_eq "history today excludes old" "2" "$(bash "$SQ" history --range today -
 assert_eq "history 30d also excludes 1970" "2" "$(bash "$SQ" history --range 30d --project a | jq -r .count)"
 
 # --- jsonl-fallback history (Fix 2 + injection guard) ---
-HJ2="$HOME/.claude/session-env/history.jsonl"
+HJ2="$HOME/.session-tracker/history.jsonl"
 cat > "$HJ2" <<JSON
 {"session_id":"hj1","project_dir":"/p/bel","active_seconds":30,"duration_seconds":30,"idle_seconds":0,"start_ts":$TODAY,"end_ts":$TODAY,"issue_key":"","reason":"other"}
 {"session_id":"hj2","project_dir":"/p/bel","active_seconds":40,"duration_seconds":40,"idle_seconds":0,"start_ts":$TODAY,"end_ts":$TODAY,"issue_key":"BEL-9","reason":"other"}
@@ -126,18 +126,18 @@ assert_eq "timeline Read seconds" "12" "$(printf '%s' "$outt" | jq -r '.interval
 assert_eq "timeline Bash failed (DF)" "true" "$(printf '%s' "$outt" | jq -r '.intervals[0].tools[]|select(.tool=="Bash").failed')"
 
 # a live events.log wins over the (legacy, frozen-at-import) events table
-mkdir -p "$HOME/.claude/session-env/s1"
-printf 'P 3000\nT 3010 Edit\nD 3040 Edit\nS 3100\n' > "$HOME/.claude/session-env/s1/events.log"
+mkdir -p "$HOME/.session-tracker/s1"
+printf 'P 3000\nT 3010 Edit\nD 3040 Edit\nS 3100\n' > "$HOME/.session-tracker/s1/events.log"
 outt="$(bash "$SQ" timeline s1)"
 assert_eq "timeline prefers live events.log" "30" "$(printf '%s' "$outt" | jq -r '.intervals[0].tools[]|select(.tool=="Edit").seconds')"
 
 # ...but an EMPTY log must not shadow it: the reset-session skill truncates
 # events.log to zero bytes, and `-f` (exists) instead of `-s` (non-empty) turned
 # a populated legacy timeline into an empty one.
-: > "$HOME/.claude/session-env/s1/events.log"
+: > "$HOME/.session-tracker/s1/events.log"
 outt="$(bash "$SQ" timeline s1)"
 assert_eq "empty events.log falls back to events table" "12" "$(printf '%s' "$outt" | jq -r '.intervals[0].tools[]|select(.tool=="Read").seconds')"
-rm -rf "$HOME/.claude/session-env/s1"
+rm -rf "$HOME/.session-tracker/s1"
 
 # unknown session → empty intervals, valid json
 oute="$(bash "$SQ" timeline nope-xyz)"
@@ -154,7 +154,7 @@ assert_eq "worklog A-1 sessions" "2" "$(printf '%s' "$outw" | jq -r '.by_issue[]
 assert_eq "worklog untagged total (s2)" "200" "$(printf '%s' "$outw" | jq -r '.untagged.active_seconds')"
 
 # --- worklog jsonl-mode (source + FROM..TO + injection) ---
-HJW="$HOME/.claude/session-env/history.jsonl"
+HJW="$HOME/.session-tracker/history.jsonl"
 cat > "$HJW" <<JSON
 {"session_id":"w1","project_dir":"/p/bel","active_seconds":60,"duration_seconds":60,"idle_seconds":0,"start_ts":$TODAY,"end_ts":$TODAY,"issue_key":"BEL-7","reason":"other"}
 {"session_id":"w2","project_dir":"/p/bel","active_seconds":90,"duration_seconds":90,"idle_seconds":0,"start_ts":$TODAY,"end_ts":$TODAY,"issue_key":"","reason":"other"}
@@ -173,7 +173,7 @@ rm -f "$HJW"
 # --- guard: source resolution ---
 # (a) with a history.jsonl present, reads the COMPLETE deduped JSONL (source jsonl),
 #     even though the partial DB exists — this is the v3.0.1/3.0.2 regression guard.
-HJ="$HOME/.claude/session-env/history.jsonl"
+HJ="$HOME/.session-tracker/history.jsonl"
 cat > "$HJ" <<JSON
 {"session_id":"j1","project_dir":"/p/z","active_seconds":10,"duration_seconds":10,"idle_seconds":0,"start_ts":$TODAY,"end_ts":$TODAY,"issue_key":"","reason":"other"}
 {"session_id":"j1","project_dir":"/p/z","active_seconds":40,"duration_seconds":40,"idle_seconds":0,"start_ts":$TODAY,"end_ts":$((TODAY+5)),"issue_key":"","reason":"other"}
@@ -204,7 +204,7 @@ assert_eq "no store → valid json" "0" "$(printf '%s' "$gn" | jq -e . >/dev/nul
 
 # --project filter must catch a worktree session via project_root even when its
 # project_dir lacks the filter substring (the project_root LIKE OR project_dir LIKE predicate).
-rm -f "$HOME/.claude/session-env/history.jsonl"   # ensure sqlite source
+rm -f "$HOME/.session-tracker/history.jsonl"   # ensure sqlite source
 st_db_init   # the (c) guard above removed the DB file; recreate schema before upserting
 st_upsert_session "pfMain" "/p/proj" "/p/proj"      "main" "PROJ-1" "$TODAY" "$TODAY" 10 10 0 "other" "$TODAY"
 st_upsert_session "pfWt"   "/p/proj" "/tmp/wt-xyz"  "feat" "PROJ-2" "$TODAY" "$TODAY" 20 20 0 "other" "$TODAY"
@@ -215,12 +215,17 @@ assert_eq "worklog --project catches worktree via project_root" "2" "$(bash "$SQ
 # status: issue_key falls back to the git branch when no issue-tag file exists
 GITREPO="$TMP/gitproj"; mkdir -p "$GITREPO"
 ( cd "$GITREPO" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init && git checkout -q -b feature/ABC-123 ) 2>/dev/null
-SIDG="git-issue-sess"; SDG="$HOME/.claude/session-env/$SIDG"; mkdir -p "$SDG"; echo "1000" > "$SDG/session-tracker"
+SIDG="git-issue-sess"; SDG="$HOME/.session-tracker/$SIDG"; mkdir -p "$SDG"; echo "1000" > "$SDG/session-tracker"
 outg="$(cd "$GITREPO" && bash "$SQ" status --session "$SIDG")"
 assert_eq "status issue_key from git branch" "ABC-123" "$(printf '%s' "$outg" | jq -r .live.issue_key)"
 # and issue-tag file still WINS over the branch
 echo "TAG-99" > "$SDG/issue-tag"
 outg2="$(cd "$GITREPO" && bash "$SQ" status --session "$SIDG")"
 assert_eq "status issue-tag wins over branch" "TAG-99" "$(printf '%s' "$outg2" | jq -r .live.issue_key)"
+
+# --- a session with no known project renders as em dash, never as empty ---
+st_upsert_session "sq-noproj" "" "" "" "" "$(date +%s)" "$(date +%s)" 60 60 0 stale "$(date +%s)"
+assert_eq "history shows an em dash for an unknown project" "—" \
+  "$(bash "$SQ" history --range today | jq -r '.rows[] | select(.active_seconds==60) | .project' | head -n1)"
 
 finish

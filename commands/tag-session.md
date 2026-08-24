@@ -5,7 +5,7 @@ disable-model-invocation: true
 
 # Tag a Past Session with an Issue Key
 
-Rewrites the `issue_key` field for a single line in `~/.claude/session-env/history.jsonl`. Use this when a session ended on a branch with no detectable issue and got logged as untagged, or when the wrong key was attached.
+Rewrites the `issue_key` field for a single line in `~/.session-tracker/history.jsonl`. Use this when a session ended on a branch with no detectable issue and got logged as untagged, or when the wrong key was attached.
 
 ## Arguments
 
@@ -24,7 +24,7 @@ Examples:
 
 ## Behavior
 
-1. Resolve the history file: `HISTORY="$HOME/.claude/session-env/history.jsonl"`. If it is missing or empty, report `No history at $HISTORY — nothing to tag.` and stop.
+1. Resolve the history file: `HISTORY="${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/history.jsonl"`. If it is missing or empty, report `No history at $HISTORY — nothing to tag.` and stop.
 2. Split `$ARGUMENTS` into `PREFIX` and `KEY_OR_FLAG`. If either is empty, print usage and stop.
 3. If `PREFIX` is shorter than 6 characters and not a full session id, refuse: `Prefix too short — give at least 6 characters or the full session_id.`.
 4. If `KEY_OR_FLAG` is not `--clear`, validate it against `^[A-Z][A-Z0-9_]+-[0-9]+$`. On mismatch report: `Invalid issue key "<input>". Expected format like LIN-456 or ABC-123.` and stop.
@@ -61,7 +61,7 @@ Examples:
 ## Implementation hint
 
 ```bash
-HISTORY="$HOME/.claude/session-env/history.jsonl"
+HISTORY="${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/history.jsonl"
 [ -s "$HISTORY" ] || { echo "No history at $HISTORY — nothing to tag."; exit 0; }
 
 read -r PREFIX KEY_OR_FLAG _ <<< "${ARGUMENTS:-}"

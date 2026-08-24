@@ -8,7 +8,7 @@ Track Claude Code session duration with automatic timestamps.
 
 ## Features
 
-- **SessionStart hook** - saves a start timestamp under `~/.claude/session-env/<session_id>/` and reports its path as `CLAUDE_SESSION_FILE` in hook output
+- **SessionStart hook** - saves a start timestamp under `~/.session-tracker/<session_id>/` and reports its path as `CLAUDE_SESSION_FILE` in hook output
 - **SessionEnd hook** - appends completed sessions to a JSONL history log for worklog reports
 - **Active (working) time** - active time is computed additively from `events.log`: each prompt→stop bracket counts in full, plus up to `SESSION_IDLE_THRESHOLD_SECONDS` (default 120s) of reading after each turn. A session left open while you work elsewhere stops accruing, so concurrent sessions on the same project stay honest. `PreToolUse`/`PostToolUse` heartbeats record tool activity for a forensic timeline.
 - **Persistent session files** - session data survives session end so you can track hours later
@@ -57,6 +57,40 @@ Then enable in `~/.claude/settings.json`:
 }
 ```
 
+### Option 4: opencode
+
+The tracking, the store, and the Solidtime sync are plain shell — nothing in
+them is specific to Claude Code. `opencode/plugin.js` maps opencode's JS hooks
+onto the same shell hooks, so both harnesses write to the same
+`~/.session-tracker/` and your worklog covers your whole day regardless of which
+editor it happened in.
+
+```bash
+REPO=~/path/to/session-tracker      # your clone
+OC=~/.config/opencode
+
+mkdir -p "$OC/plugins" "$OC/skills" "$OC/commands"
+ln -sf  "$REPO/opencode/plugin.js" "$OC/plugins/session-tracker.js"
+ln -sfn "$REPO/commands"           "$OC/commands/session-tracker"
+for skill in "$REPO"/skills/*/; do
+  ln -sfn "$skill" "$OC/skills/$(basename "$skill")"
+done
+```
+
+The skills and commands are shared verbatim — opencode reads the same
+body-as-prompt markdown, and the plugin publishes the session id into every
+shell call so they locate the live session exactly as they do in Claude Code.
+Commands are namespaced by directory there, so `/session-tracker:sync` in Claude
+Code is `/session-tracker/sync` in opencode.
+
+Two differences worth knowing:
+
+- **No status line.** opencode's TUI has no custom status line API, so the live
+  timer is only available through `/session-tracker/session-status`.
+- **Shutdown vs. crash.** opencode has no session-end event; the plugin uses its
+  `dispose` hook, which runs on a clean exit. A hard kill is covered by the
+  background sweep described under [Where your data lives](#where-your-data-lives).
+
 ### Verify Installation
 
 Inside a Claude Code session:
@@ -97,11 +131,11 @@ The timer resets to zero from the current time. The `/clear` command also resets
 
 ### Session History & Worklog
 
-Each time a session ends, the `SessionEnd` hook records the session (id, start/end timestamps, duration, project, branch/issue, and exit reason) in the local SQLite database at `~/.claude/session-env/history.db`. If `sqlite3` isn't installed, it falls back to appending a JSON line to `~/.claude/session-env/history.jsonl` instead.
+Each time a session ends, the `SessionEnd` hook records the session (id, start/end timestamps, duration, project, branch/issue, and exit reason) in the local SQLite database at `~/.session-tracker/history.db`. If `sqlite3` isn't installed, it falls back to appending a JSON line to `~/.session-tracker/history.jsonl` instead.
 
 **Migration:** on the first session after upgrading, any existing `history.jsonl` is imported into SQLite automatically and renamed `history.jsonl.imported`. No action needed.
 
-All of this is read through a single `session-query` helper (deployed to `~/.claude/session-env/` on session start) that the `session-status`/`session-history` skills and the `worklog` command call and render — it owns the SQLite-vs-JSON-lines fallback and the query logic in one tested place.
+All of this is read through a single `session-query` helper (deployed to `~/.session-tracker/` on session start) that the `session-status`/`session-history` skills and the `worklog` command call and render — it owns the SQLite-vs-JSON-lines fallback and the query logic in one tested place.
 
 Query it with `/session-tracker:session-history` or ask naturally:
 
@@ -120,7 +154,7 @@ Each finished session is tagged with an issue key (e.g. `LIN-456`, `ABC-123`) so
 
 Resolution order used by the `SessionEnd` hook:
 
-1. Explicit tag written via `/session-tracker:tag LIN-456` — stored at `~/.claude/session-env/<session_id>/issue-tag`.
+1. Explicit tag written via `/session-tracker:tag LIN-456` — stored at `~/.session-tracker/<session_id>/issue-tag`.
 2. Branch heuristic — the first `[A-Z][A-Z0-9_]+-[0-9]+` match on the current git branch (works with common conventions like `feat/LIN-456-title`).
 3. Empty if nothing resolves. Older entries without `issue_key` are treated as empty.
 
@@ -148,7 +182,7 @@ Then post your worklog to whichever issue tracker MCP you have connected:
 /session-tracker:worklog 2026-04-01..2026-04-14
 ```
 
-`/session-tracker:worklog` is **MCP-agnostic** — it introspects the tool inventory at runtime and adapts to whatever is connected. It supports true Jira worklog semantics (`timeSpent`), Linear comments (since Linear has no native worklog), and Notion time-tracking databases, and falls back to a clean copy-pasteable markdown block when no tracker MCP is available. Every post is previewed and confirmed before any tool call; posts are logged to `~/.claude/session-env/worklog-posted.log` for dedup.
+`/session-tracker:worklog` is **MCP-agnostic** — it introspects the tool inventory at runtime and adapts to whatever is connected. It supports true Jira worklog semantics (`timeSpent`), Linear comments (since Linear has no native worklog), and Notion time-tracking databases, and falls back to a clean copy-pasteable markdown block when no tracker MCP is available. Every post is previewed and confirmed before any tool call; posts are logged to `~/.session-tracker/worklog-posted.log` for dedup.
 
 See `commands/tag.md` and `commands/worklog.md` for full details.
 
@@ -162,7 +196,7 @@ Set it up with:
 /session-tracker:sync-setup
 ```
 
-which walks you through creating an API token in the Solidtime UI, finding the organization id, and saves them to `~/.claude/session-env/solidtime.conf` (created `chmod 600` — the token is sent only to the instance you configured in `SOLIDTIME_URL`, and is never written to any other file or log). Use an `https://` URL unless your instance is on a trusted local network: the token travels as a bearer header, so a plain `http://` URL sends it in the clear.
+which walks you through creating an API token in the Solidtime UI, finding the organization id, and saves them to `~/.session-tracker/config.yml` (created `chmod 600` — the token is sent only to the instance you configured in `SOLIDTIME_URL`, and is never written to any other file or log). Use an `https://` URL unless your instance is on a trusted local network: the token travels as a bearer header, so a plain `http://` URL sends it in the clear.
 
 Headless or ephemeral environments (CI, cloud, sandbox VMs) where writing that file is awkward can instead set `SOLIDTIME_URL`, `SOLIDTIME_TOKEN`, and `SOLIDTIME_ORG_ID` as environment variables. The file, when present, always takes precedence over the environment.
 
@@ -172,7 +206,7 @@ Sync is background and local-first: hooks never wait on the network, and a Solid
 /session-tracker:sync
 ```
 
-or ask naturally ("sync my time to Solidtime", "is sync working?"). Sync activity is logged to `~/.claude/session-env/solidtime-sync.log` (self-rotating). See `commands/sync.md`, `commands/sync-setup.md`, `skills/sync/SKILL.md`, and `docs/superpowers/specs/2026-08-21-solidtime-sync-design.md` for full details.
+or ask naturally ("sync my time to Solidtime", "is sync working?"). Sync activity is logged to `~/.session-tracker/solidtime-sync.log` (self-rotating). See `commands/sync.md`, `commands/sync-setup.md`, `skills/sync/SKILL.md`, and `docs/superpowers/specs/2026-08-21-solidtime-sync-design.md` for full details.
 
 ## Status Line (optional)
 
@@ -188,12 +222,80 @@ The time shown is **active** (working) time — the same number `session-status`
 
 ## How It Works
 
-1. On session start, the `SessionStart` hook reads `session_id` from its stdin JSON and writes the start timestamp to `~/.claude/session-env/<session_id>/session-tracker`, then prints that path back as `CLAUDE_SESSION_FILE` in its hook output (no `CLAUDE_ENV_FILE` indirection)
+1. On session start, the `SessionStart` hook reads `session_id` from its stdin JSON and writes the start timestamp to `~/.session-tracker/<session_id>/session-tracker`, then prints that path back as `CLAUDE_SESSION_FILE` in its hook output (no `CLAUDE_ENV_FILE` indirection)
 2. The session ID is stable across context compaction, so the timestamp survives compact and resume without extra hooks
-3. `/session-tracker:session-status` and the statusline locate the file by `session_id` under `~/.claude/session-env/<session_id>/` and read it from that per-session directory
+3. `/session-tracker:session-status` and the statusline locate the file by `session_id` under `~/.session-tracker/<session_id>/` and read it from that per-session directory
 4. Session files persist after session end - no data is lost when closing Claude Code
 5. Using `/clear` or starting a new session creates a fresh timestamp
-6. `UserPromptSubmit`/`Stop` and `PreToolUse`/`PostToolUse` hooks append `P`/`S` and `T`/`D <tool>` lines to `events.log`; active time is computed additively (prompt→stop brackets plus a bounded reading grace) by `hooks/lib/active-time.awk`, which `SessionStart` deploys to `~/.claude/session-env/active-time.awk` for the statusline and skills to share
+6. `UserPromptSubmit`/`Stop` and `PreToolUse`/`PostToolUse` hooks append `P`/`S` and `T`/`D <tool>` lines to `events.log`; active time is computed additively (prompt→stop brackets plus a bounded reading grace) by `hooks/lib/active-time.awk`, which `SessionStart` deploys to `~/.session-tracker/active-time.awk` for the statusline and skills to share
+7. If a session dies without a `SessionEnd` — a crash, a `kill`, power loss — the next session start sweeps it up in the background and records it from its own last event, so the time still lands in your history and your Solidtime sync
+
+## Where your data lives
+
+Everything the plugin writes lives in one directory:
+
+```
+~/.session-tracker/
+├── history.db                  # the session store (SQLite)
+├── config.yml                  # plugin config (sync credentials; chmod 600)
+├── solidtime-sync.log
+├── <session_id>/               # one directory per session
+│   ├── session-tracker         # start timestamp
+│   ├── events.log              # prompt/stop/tool events
+│   ├── cwd, issue-tag          # project + issue context
+│   └── solidtime-synced        # per-session sync ledger
+└── active-time.awk, db.sh, session-query.sh, …   # libs deployed on session start
+```
+
+Set `SESSION_TRACKER_HOME` to put it somewhere else.
+
+### config.yml
+
+One file for the whole plugin. Today it holds the optional Solidtime
+credentials; `/session-tracker:sync-setup` writes them for you, but it is plain
+YAML you can also edit by hand:
+
+```yaml
+solidtime:
+  url: https://app.solidtime.io
+  token: 1|abcdef...
+  org_id: 0192f...
+```
+
+It is **parsed, not executed** — a token containing `|`, `#`, `$` or quotes needs
+no special care. The supported syntax is deliberately small: `section:` plus one
+level of `key: value`, `#` comments, and optional quotes around a value. Lists,
+deeper nesting and multi-line values are not supported, and anything
+unparseable is ignored rather than guessed at.
+
+**Upgrading from v3 or earlier?** Nothing to do. The store used to live in
+`~/.claude/session-env/` and the sync credentials in a shell-sourced
+`solidtime.conf`; the first session start after the update moves the directory,
+converts the config to `config.yml`, and keeps the originals (a symlink at the
+old path, and `solidtime.conf.migrated` beside the new file). A status line
+snippet you already pasted into `settings.json` keeps working untouched. Neither
+path is tied to Claude Code any more, which is what lets a second harness share
+the same history.
+
+### Sessions that never got a clean shutdown
+
+`SessionEnd` is an optimization, not a guarantee — Claude Code can be killed and
+machines lose power. Everything the accounting needs is already on disk in
+`events.log`, so a background sweep at session start closes any session that has
+been silent for more than 4 hours, using its **last recorded event** as the end
+time (never the current time — that is the last moment we know you were
+working). Sessions with no events at all are left alone rather than given an
+invented end time.
+
+Two knobs, both optional:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `SESSION_TRACKER_STALE_SECONDS` | `14400` (4h) | Silence after which a session is treated as dead |
+| `SESSION_TRACKER_REAP_WINDOW_DAYS` | `7` | How far back the sweep looks |
+
+If a swept session turns out to still be alive, it corrects itself: the real
+`SessionEnd` overwrites the swept row.
 
 ## Managing the Plugin
 
@@ -217,13 +319,13 @@ claude plugin update session-tracker@aguinaldotupy --scope user
 - **`bash`** and **`jq`** — required. All read queries (status, history,
   timeline, worklog) run through the `session-query` helper, which needs both.
 - **`sqlite3`** — recommended, not required. The session history is stored in
-  a local SQLite database at `~/.claude/session-env/history.db`. If `sqlite3`
+  a local SQLite database at `~/.session-tracker/history.db`. If `sqlite3`
   is not installed the plugin still works: `session-query` falls back to a
   JSON-lines log (`history.jsonl`) for the same reads. Install `sqlite3` to
   get the relational store, correct cross-session totals, and per-project
   (worktree-aware) grouping. Present by default on macOS.
 - **`curl`** — required only for the optional Solidtime sync (see above).
-  Without it, sync logs one line to `~/.claude/session-env/solidtime-sync.log`
+  Without it, sync logs one line to `~/.session-tracker/solidtime-sync.log`
   and stays inert; everything else is unaffected. Present by default on macOS.
 - **Native Windows** is not supported directly — use WSL or Git Bash, since
   the hooks and `session-query` are POSIX shell/`awk`.

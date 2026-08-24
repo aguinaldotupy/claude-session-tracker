@@ -9,23 +9,23 @@ Runs the Solidtime sync client and reports sync health — same behavior as `/se
 
 ## Mechanism
 
-`~/.claude/session-env/solidtime-sync.sh` (deployed by the `SessionStart` hook) posts each finished session's active-time brackets to a Solidtime instance as time entries — see `docs/superpowers/specs/2026-08-21-solidtime-sync-design.md`. It runs on three triggers: automatically in the background right when a session ends, again on the next `SessionStart` to retry anything still pending, and on demand via `/session-tracker:sync` or this skill. It's local-first: nothing is lost if the instance is unreachable — the session stays in the local store until one of those triggers succeeds. Configuration lives in `~/.claude/session-env/solidtime.conf` (`chmod 600`); when it's missing, sync is silently inactive.
+`~/.session-tracker/solidtime-sync.sh` (deployed by the `SessionStart` hook) posts each finished session's active-time brackets to a Solidtime instance as time entries — see `docs/superpowers/specs/2026-08-21-solidtime-sync-design.md`. It runs on three triggers: automatically in the background right when a session ends, again on the next `SessionStart` to retry anything still pending, and on demand via `/session-tracker:sync` or this skill. It's local-first: nothing is lost if the instance is unreachable — the session stays in the local store until one of those triggers succeeds. Configuration lives in `~/.session-tracker/config.yml` (`chmod 600`); when it's missing, sync is silently inactive.
 
 ## Usage
 
-1. If `~/.claude/session-env/solidtime.conf` doesn't exist **and** `SOLIDTIME_URL` is unset (the env-var config mode), tell the user sync isn't configured and point them at `/session-tracker:sync-setup`. Stop.
+1. If `~/.session-tracker/config.yml` doesn't exist **and** `SOLIDTIME_URL` is unset (the env-var config mode), tell the user sync isn't configured and point them at `/session-tracker:sync-setup`. Stop.
 2. Run:
    ```bash
-   bash "$HOME/.claude/session-env/solidtime-sync.sh" --verbose
+   bash "${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/solidtime-sync.sh" --verbose
    ```
 3. Read sync health:
    ```bash
-   bash "$HOME/.claude/session-env/session-query.sh" status
+   bash "${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/session-query.sh" status
    ```
    Use `.sync`: `{configured, pending, last_error}`.
 4. If useful, show the tail of the log:
    ```bash
-   tail -n 10 "$HOME/.claude/session-env/solidtime-sync.log"
+   tail -n 10 "${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/solidtime-sync.log"
    ```
 
 ## Output Format

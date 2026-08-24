@@ -17,14 +17,14 @@ Optional date filter parsed from `$ARGUMENTS`, same grammar as `/session-tracker
 
 1. Call the CLI to get grouped totals for the date filter:
    ```bash
-   bash "$HOME/.claude/session-env/session-query.sh" worklog --range 7d
+   bash "${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/session-query.sh" worklog --range 7d
    ```
    Returns `{source, by_issue:[{issue_key,project,active_seconds,sessions}], untagged:{active_seconds,sessions}}`. If `source == "none"`, tell the user there is nothing to post and stop.
 2. **Group by `issue_key`** using `by_issue` directly — it is already grouped with `active_seconds` and `sessions` per key (grouped by the real `issue_key`, not a branch-name fallback). `untagged` is the pre-aggregated bucket for sessions with no issue key.
 3. For the per-session `HH:MM-HH:MM` lines under each issue (used in the summary and the fallback markdown block), also call `session-query history --range <same filter>` and match its rows to each issue by `branch_issue == issue_key` (using `start_local`/`end_local`). Print a markdown summary:
    - One section per issue key with total duration (`Xh Ym`) and session count from `by_issue`, plus each matched session's `HH:MM-HH:MM` from `history`.
    - A final "Untagged" section (from `untagged`) if `untagged.sessions > 0`.
-4. **Inline retroactive tagging.** `session-query` does not expose individual `session_id`s (it's a read-only aggregation CLI — writes, including tagging, stay out of its scope), and `/session-tracker:tag-session` only operates on `$HOME/.claude/session-env/history.jsonl`. So when `untagged.sessions > 0`, enumerate the untagged sessions to tag by reading `history.jsonl` directly (as before), applying the same date filter on `.start_ts`:
+4. **Inline retroactive tagging.** `session-query` does not expose individual `session_id`s (it's a read-only aggregation CLI — writes, including tagging, stay out of its scope), and `/session-tracker:tag-session` only operates on `${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/history.jsonl`. So when `untagged.sessions > 0`, enumerate the untagged sessions to tag by reading `history.jsonl` directly (as before), applying the same date filter on `.start_ts`:
    - If `history.jsonl` is missing (e.g. fully migrated to SQLite), skip this step entirely — tell the user the untagged total from step 1 but that retroactive tagging isn't available without the JSONL log, then proceed to posting with `untagged` sessions excluded from any per-issue plan.
    - Otherwise, for each untagged session, list a short id (first 8 chars of `session_id`), human-readable `start_ts` (e.g. `2026-04-14 09:12`), duration (`Xh Ym`), and `project_dir`.
    - Prompt the user per session with three choices: **(s)kip**, **(t)ag retroactively** (then ask for the issue key), or **(b)atch-tag remaining** (then ask once for an issue key that will be applied to every remaining untagged entry).
@@ -41,8 +41,8 @@ Optional date filter parsed from `$ARGUMENTS`, same grammar as `/session-tracker
    - **No supported MCP connected**: skip posting and print a clean copy-pasteable markdown block per issue as the fallback.
 7. **Before any tool call, verify the MCP tool's schema via ToolSearch** (`select:<tool_name>`) and confirm field names with the user. Different Linear/Jira MCPs disagree on field names — never assume.
 8. **Show the full plan and ask for explicit confirmation** before executing any MCP tool call. The user must say yes per-issue or yes-to-all. No silent posting.
-9. **Dedup check.** Before posting, read `$HOME/.claude/session-env/worklog-posted.log` and warn the user if a matching `<date> <issue_key> <tool>` line already exists for the current window. Offer to skip or re-post.
-10. **After a successful post**, append one line to `$HOME/.claude/session-env/worklog-posted.log`:
+9. **Dedup check.** Before posting, read `${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/worklog-posted.log` and warn the user if a matching `<date> <issue_key> <tool>` line already exists for the current window. Offer to skip or re-post.
+10. **After a successful post**, append one line to `${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/worklog-posted.log`:
     ```
     <ISO-date> <issue_key> <duration_seconds> <tool>
     ```
