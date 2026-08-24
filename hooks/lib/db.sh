@@ -54,9 +54,10 @@ st_config_file() { printf '%s/config.yml' "$(st_home)"; }
 # is stripped; `-` in a key becomes `_`. Everything else — lists, nesting past
 # one level, anchors, multi-line scalars, inline comments after a value — is not
 # supported, and unparseable lines are dropped rather than guessed at.
+# A second argument of `sections` restricts the output to section-scoped keys.
 st_config_parse() {
   [ -r "${1:-}" ] || return 1
-  awk '
+  awk -v sections_only="${2:-}" '
     {
       line = $0
       sub(/\r$/, "", line)
@@ -75,6 +76,7 @@ st_config_parse() {
       if (indent == 0) {
         if (val == "") { section = toupper(key); next }
         section = ""
+        if (sections_only != "") next
         name = toupper(key)
       } else {
         if (section == "") next
@@ -98,6 +100,11 @@ st_config_parse() {
 # file does not set, and exporting an empty string would overwrite a working
 # credential with nothing -- which is exactly the shape st_migrate_config
 # produces for a legacy conf whose token it could not read.
+#
+# Only section-scoped keys are exported. A bare `path:` or `home:` at the top
+# level would otherwise clobber PATH/HOME for whoever loaded the config, and no
+# top-level key is read by anything -- so this drops capability nobody asked for
+# rather than bolting on a denylist. Readers still see them via st_config_parse.
 st_config_load() {
   local f name value
   f="$(st_config_file)"
@@ -107,7 +114,7 @@ st_config_load() {
     [ -n "$value" ] || continue
     export "$name=$value"
   done <<CONFIG
-$(st_config_parse "$f")
+$(st_config_parse "$f" sections)
 CONFIG
   return 0
 }

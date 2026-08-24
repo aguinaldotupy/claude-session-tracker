@@ -171,4 +171,33 @@ assert_eq "unreadable token: no .migrated left behind" "no" \
 assert_eq "unreadable token: no empty token written" "0" \
   "$(grep -c 'token:$' "$SE8/config.yml" 2>/dev/null)"
 
+# --- a top-level key never becomes an environment variable.
+#     Only section-scoped keys are exported: `path:` or `home:` at the top level
+#     would otherwise clobber PATH/HOME for the sync process. Nothing reads a
+#     top-level key, so exporting them was capability nobody asked for. ---
+H9="$TMP/h9"; SE9="$H9/.session-tracker"; mkdir -p "$SE9"
+cat > "$SE9/config.yml" <<'YAML'
+path: /nowhere/evil
+home: /nowhere/evil
+log_level: debug
+solidtime:
+  url: https://ok.test
+YAML
+
+out="$(HOME="$H9" bash -c '
+  . "$1/hooks/lib/db.sh"
+  before_path="$PATH"; before_home="$HOME"
+  st_config_load >/dev/null 2>&1
+  printf "%s|%s|%s" \
+    "$([ "$PATH" = "$before_path" ] && echo kept || echo clobbered)" \
+    "$([ "$HOME" = "$before_home" ] && echo kept || echo clobbered)" \
+    "${SOLIDTIME_URL:-unset}"' _ "$ROOT")"
+assert_eq "load leaves PATH/HOME alone and still sets the section key" \
+  "kept|kept|https://ok.test" "$out"
+
+# the parser's contract is unchanged — it still reports every key it can read
+parsed="$(st_config_parse "$SE9/config.yml")"
+assert_eq "parse still reports top-level keys" "debug" "$(get LOG_LEVEL)"
+assert_eq "parse still reports section keys" "https://ok.test" "$(get SOLIDTIME_URL)"
+
 finish
