@@ -5,6 +5,63 @@ All notable changes to this plugin are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-08-24
+
+Everything the plugin writes moves out of `~/.claude/`, sessions that die
+without a clean shutdown are no longer lost, and the whole thing now runs under
+[opencode](https://opencode.ai) as well as Claude Code — sharing one history,
+one worklog and one Solidtime sync between them.
+
+**Upgrading is automatic.** The first session start after the update moves the
+store, converts the config, and keeps the originals. Read *Changed* below if you
+have scripts pointing at the old paths.
+
+### Added
+- **Sessions that never got a clean shutdown are now recorded.** `SessionEnd` is
+  an optimization, not a guarantee — Claude Code can be killed and machines lose
+  power — and until now such a session was silently dropped from your history and
+  your sync, even though everything the accounting needs was already on disk in
+  `events.log`. A background sweep at session start closes any session that has
+  been silent for more than 4 hours, using its **last recorded event** as the end
+  time (never the current time — that is the last moment we know you were
+  working). Sessions with no events at all are left alone rather than given an
+  invented end time. Tune with `SESSION_TRACKER_STALE_SECONDS` (default `14400`)
+  and `SESSION_TRACKER_REAP_WINDOW_DAYS` (default `7`).
+- **opencode support.** `opencode/plugin.js` maps opencode's hooks onto the same
+  shell hooks Claude Code drives, writing to the same store — so your worklog
+  covers your whole day regardless of which editor it happened in. Skills and
+  commands are shared verbatim; installation is symlinks. See the README. The
+  status line is the one thing that does not port: opencode's TUI has no custom
+  status line API.
+- `SESSION_TRACKER_HOME` to put the store somewhere other than the default.
+- `SESSION_TRACKER_SESSION_ID`, a harness-neutral way for skills to locate the
+  live session. `CLAUDE_SESSION_ID` still works.
+
+### Changed
+- **BREAKING — the store moved to `~/.session-tracker/`.** It used to live in
+  `~/.claude/session-env/`, a path tied to one editor. The first session start
+  after the update moves the directory and **leaves a symlink at the old path**,
+  so a status line snippet you already pasted into `settings.json` keeps working
+  untouched. Anything of your own that hardcodes the old path also keeps working
+  through that symlink, but is worth updating.
+- **BREAKING — `solidtime.conf` became `config.yml`**, one config file for the
+  whole plugin. It is converted on first start and the original is kept beside it
+  as `solidtime.conf.migrated`. The new file is **parsed, never executed**: the
+  old one was sourced as shell, so a token containing `|`, `#`, `$` or quotes
+  needed exact quoting to survive — Solidtime's own Sanctum tokens are shaped
+  `<id>|<random>`, which made this a real trap. The supported syntax is
+  deliberately small (a section plus one level of `key: value`), and anything
+  unparseable is ignored rather than guessed at.
+
+  ```yaml
+  solidtime:
+    url: https://app.solidtime.io
+    token: 1|abcdef...
+    org_id: 0192f...
+  ```
+- A session whose project cannot be determined is now stored with no project at
+  all, and shown as `—`, instead of being filed under a blank name.
+
 ## [3.2.0] - 2026-08-24
 
 ### Added
@@ -226,6 +283,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: `SessionStart` hook + `session-status` skill + optional
   statusline snippet for live elapsed time.
 
+[4.0.0]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v3.2.0...v4.0.0
 [3.2.0]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v3.1.1...v3.2.0
 [3.1.1]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v3.1.0...v3.1.1
 [3.1.0]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v3.0.2...v3.1.0

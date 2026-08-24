@@ -1,7 +1,7 @@
 {
   "name": "session-tracker",
   "description": "Track Claude Code session duration with automatic timestamps, elapsed time skill, and optional status line integration",
-  "version": "3.2.0",
+  "version": "4.0.0",
   "author": {
     "name": "Aguinaldo Tupy"
   },
