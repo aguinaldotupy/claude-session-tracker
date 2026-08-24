@@ -2,7 +2,8 @@
 # Session elapsed time snippet for status line scripts.
 # Copy this block into your ~/.claude/statusline-command.sh
 #
-# Derives **active** (working) time from the session's events.log using the awk deployed at $HOME/.claude/session-env/active-time.awk; falls back to wall-clock when either is missing.
+# Derives **active** (working) time from the session's events.log using the awk deployed at $ST_HOME/active-time.awk
+# ($ST_HOME = ${SESSION_TRACKER_HOME:-~/.session-tracker}); falls back to wall-clock when either is missing.
 # Falls back to $PPID for legacy setups.
 #
 # Expects: $input variable with the statusline JSON (from stdin)
@@ -10,9 +11,10 @@
 
 session_time=""
 sf=""
+st_home="${SESSION_TRACKER_HOME:-$HOME/.session-tracker}"
 session_id=$(echo "$input" | jq -r '.session_id // empty')
 if [ -n "$session_id" ]; then
-  sf="$HOME/.claude/session-env/${session_id}/session-tracker"
+  sf="$st_home/${session_id}/session-tracker"
 fi
 if [ -z "$sf" ]; then
   sf="/tmp/claude-session-$PPID"
@@ -22,7 +24,7 @@ if [ -n "$sf" ] && [ -f "$sf" ]; then
   now=$(date +%s)
   grace="${SESSION_IDLE_THRESHOLD_SECONDS:-120}"
   events="$(dirname "$sf")/events.log"
-  awklib="$HOME/.claude/session-env/active-time.awk"
+  awklib="$st_home/active-time.awk"
   if [ -f "$events" ] && [ -f "$awklib" ]; then
     # Active (working) time via the shared awk deployed by session-start.sh.
     secs=$(awk -v grace="$grace" -v t_end="$now" -f "$awklib" "$events")

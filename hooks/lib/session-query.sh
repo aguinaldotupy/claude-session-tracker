@@ -6,8 +6,9 @@ set -uo pipefail
 _SQ_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 . "$_SQ_DIR/db.sh"
+_SQ_ENV="$(st_home)"
 
-_sq_hist() { printf '%s/.claude/session-env/history.jsonl' "$HOME"; }
+_sq_hist() { printf '%s/history.jsonl' "$_SQ_ENV"; }
 
 # Which store is authoritative right now. While history.jsonl exists (migration
 # pending or sqlite3 absent) the deduped JSONL is the complete source; otherwise
@@ -23,15 +24,15 @@ _sq_int() { case "$1" in ''|*[!0-9]*) echo 0 ;; *) echo "$1" ;; esac; }
 sq_status() {
   local sid="" now sdir start_ts live_elapsed live_active issue src
   while [ $# -gt 0 ]; do case "$1" in --session) sid="$2"; shift 2 ;; *) shift ;; esac; done
-  [ -z "$sid" ] && sid="${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
+  [ -z "$sid" ] && sid="${SESSION_TRACKER_SESSION_ID:-${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}}"
   now="$(date +%s)"
   src="$(_sq_source)"
-  sdir="$HOME/.claude/session-env/$sid"
+  sdir="$_SQ_ENV/$sid"
   start_ts=0; live_elapsed=0; live_active=0; issue=""
   if [ -n "$sid" ] && [ -f "$sdir/session-tracker" ]; then
     start_ts="$(_sq_int "$(cat "$sdir/session-tracker" 2>/dev/null)")"
     [ "$start_ts" -gt 0 ] && live_elapsed=$((now - start_ts))
-    local awk_lib="$HOME/.claude/session-env/active-time.awk"
+    local awk_lib="$_SQ_ENV/active-time.awk"
     if [ -f "$sdir/events.log" ] && [ -f "$awk_lib" ]; then
       live_active="$(_sq_int "$(awk -v grace="${SESSION_IDLE_THRESHOLD_SECONDS:-120}" -v t_end="$now" -f "$awk_lib" "$sdir/events.log" 2>/dev/null)")"
     fi
@@ -52,8 +53,8 @@ EOF
   fi
   tsecs="$(_sq_int "$tsecs")"; tcount="$(_sq_int "$tcount")"
   local sync_conf=false sync_pending=0 sync_err=""
-  local senv="$HOME/.claude/session-env"
-  if [ -f "$senv/solidtime.conf" ] || [ -n "${SOLIDTIME_URL:-}" ]; then
+  local senv="$_SQ_ENV"
+  if [ -f "$senv/config.yml" ] || [ -n "${SOLIDTIME_URL:-}" ]; then
     sync_conf=true
     # Published by solidtime-sync.sh at the end of every run — the writer already
     # walks the pending list, so the read side just reads the number. Deriving it
@@ -118,7 +119,7 @@ sq_history() {
              s.end_ts AS end,
              strftime('%H:%M', s.end_ts,'unixepoch','localtime') AS end_local,
              s.active_seconds AS active_seconds,
-             p.name AS project,
+             COALESCE(NULLIF(p.name,''),'—') AS project,
              COALESCE(NULLIF(s.issue_key,''),NULLIF(s.branch,''),'—') AS branch_issue
       FROM sessions s LEFT JOIN projects p ON p.id=s.project_id
       WHERE $where AND $pfilter ORDER BY s.start_ts;" 2>/dev/null)"
@@ -132,7 +133,7 @@ sq_history() {
       def pmatch: (\$proj==\"\" or ((.project_dir//\"\")|ascii_downcase|contains(\$proj)));
       map(select(($rexpr) and pmatch)) | group_by(.session_id) | map(max_by(.end_ts))
       | map({start:.start_ts, start_local:(.start_ts|strflocaltime(\"%H:%M\")), end:.end_ts, end_local:(.end_ts|strflocaltime(\"%H:%M\")),
-             active_seconds:(.active_seconds // .duration_seconds // 0), project:((.project_dir//\"\")|split(\"/\")|last),
+             active_seconds:(.active_seconds // .duration_seconds // 0), project:(((.project_dir//\"\")|split(\"/\")|last|select(.!=\"\")) // \"—\"),
              branch_issue:(if (.issue_key//\"\")!=\"\" then .issue_key elif (.branch//\"\")!=\"\" then .branch else \"—\" end)})" "$(_sq_hist)" 2>/dev/null)"
     [ -z "$rows" ] && rows='[]'
   else
@@ -157,8 +158,8 @@ sq_timeline() {
   # -s, not -f: the reset-session skill truncates events.log to zero bytes, and
   # an empty file must not shadow the rows a pre-v3.1.2 import left in `events`
   # (that shadowing turned a populated timeline into an empty one).
-  if [ -s "$HOME/.claude/session-env/$sid/events.log" ]; then
-    ev_src="$(cat "$HOME/.claude/session-env/$sid/events.log" 2>/dev/null)"
+  if [ -s "$_SQ_ENV/$sid/events.log" ]; then
+    ev_src="$(cat "$_SQ_ENV/$sid/events.log" 2>/dev/null)"
   elif st_has_sqlite && [ -f "$(st_db_path)" ]; then
     ev_src="$(sqlite3 -separator ' ' "$(st_db_path)" "SELECT kind, ts, COALESCE(tool,'') FROM events WHERE session_id='$(st_sql_escape "$sid")' ORDER BY ts;" 2>/dev/null)"
   fi
@@ -201,7 +202,7 @@ sq_worklog() {
     local pfilter="1"
     if [ -n "$project" ]; then local ep; ep="$(st_sql_escape "$project")"; pfilter="(p.project_root LIKE '%$ep%' OR s.project_dir LIKE '%$ep%')"; fi
     by="$(sqlite3 -json "$(st_db_path)" "
-      SELECT s.issue_key AS issue_key, MIN(p.name) AS project, SUM(s.active_seconds) AS active_seconds, COUNT(*) AS sessions
+      SELECT s.issue_key AS issue_key, COALESCE(NULLIF(MIN(p.name),''),'—') AS project, SUM(s.active_seconds) AS active_seconds, COUNT(*) AS sessions
       FROM sessions s LEFT JOIN projects p ON p.id=s.project_id
       WHERE $where AND $pfilter AND COALESCE(s.issue_key,'')<>'' GROUP BY s.issue_key ORDER BY active_seconds DESC;" 2>/dev/null)"
     untag="$(sqlite3 -json "$(st_db_path)" "
@@ -217,7 +218,7 @@ sq_worklog() {
       def pmatch: (\$proj==\"\" or ((.project_dir//\"\")|ascii_downcase|contains(\$proj)));
       map(select(($rexpr) and pmatch)) | group_by(.session_id) | map(max_by(.end_ts))" "$(_sq_hist)" 2>/dev/null)"
     by="$(printf '%s' "$base" | jq 'map(select((.issue_key//"")!="")) | group_by(.issue_key)
-      | map({issue_key:.[0].issue_key, project:(.[0].project_dir|split("/")|last), active_seconds:(map(.active_seconds//.duration_seconds//0)|add), sessions:length})' 2>/dev/null)"
+      | map({issue_key:.[0].issue_key, project:((.[0].project_dir|split("/")|last|select(.!="")) // "—"), active_seconds:(map(.active_seconds//.duration_seconds//0)|add), sessions:length})' 2>/dev/null)"
     untag="$(printf '%s' "$base" | jq '[ .[] | select((.issue_key//"")=="") ] | {active_seconds:(map(.active_seconds//.duration_seconds//0)|add // 0), sessions:length}' 2>/dev/null)"
   fi
   [ -z "$by" ] && by='[]'; printf '%s' "$by" | jq -e . >/dev/null 2>&1 || by='[]'

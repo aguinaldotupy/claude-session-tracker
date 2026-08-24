@@ -8,7 +8,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP"
 SID="sl-session-1"
-ENVDIR="$TMP/.claude/session-env"
+ENVDIR="$TMP/.session-tracker"
 SDIR="$ENVDIR/$SID"
 mkdir -p "$SDIR"
 # Simulate the deploy that session-start.sh performs

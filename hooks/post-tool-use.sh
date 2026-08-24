@@ -12,7 +12,8 @@ set -uo pipefail
   TOOL=$(echo "$INPUT" | jq -r '.tool_name // "?"' | tr -d '[:space:]')
   [ -z "$TOOL" ] && TOOL="?"
 
-  SESSION_DIR="$HOME/.claude/session-env/$SESSION_ID"
+  ST_HOME="${SESSION_TRACKER_HOME:-$HOME/.session-tracker}"
+  SESSION_DIR="$ST_HOME/$SESSION_ID"
   EVENTS_FILE="$SESSION_DIR/events.log"
 
   mkdir -p "$SESSION_DIR"

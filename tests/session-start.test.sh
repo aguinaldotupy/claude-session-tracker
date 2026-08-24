@@ -11,16 +11,16 @@ SID="start-session-1"
 
 echo '{"session_id":"'"$SID"'","source":"startup"}' | bash "$ROOT/hooks/session-start.sh" >/dev/null
 
-DEPLOYED="$TMP/.claude/session-env/active-time.awk"
+DEPLOYED="$TMP/.session-tracker/active-time.awk"
 assert_eq "awk deployed to stable path" "yes" "$([ -f "$DEPLOYED" ] && echo yes || echo no)"
 if diff -q "$ROOT/hooks/lib/active-time.awk" "$DEPLOYED" >/dev/null 2>&1; then d=same; else d=diff; fi
 assert_eq "deployed copy matches source" "same" "$d"
 # Existing behavior preserved: start timestamp written
 assert_eq "start timestamp written" "yes" \
-  "$([ -f "$TMP/.claude/session-env/$SID/session-tracker" ] && echo yes || echo no)"
+  "$([ -f "$TMP/.session-tracker/$SID/session-tracker" ] && echo yes || echo no)"
 
 # --- SQLite store bootstrap ---
-SE2="$TMP/.claude/session-env"; mkdir -p "$SE2"
+SE2="$TMP/.session-tracker"; mkdir -p "$SE2"
 cat > "$SE2/history.jsonl" <<'JSON'
 {"session_id":"m1","project_dir":"/p/x","active_seconds":42,"duration_seconds":42,"idle_seconds":0,"start_ts":10,"end_ts":52,"reason":"other"}
 JSON
@@ -32,7 +32,7 @@ assert_eq "history file renamed" "no" "$([ -f "$SE2/history.jsonl" ] && echo yes
 
 # --- deploy of db.sh + session-query.sh for skills ---
 echo '{"session_id":"dep-1","source":"startup"}' | bash "$ROOT/hooks/session-start.sh" >/dev/null
-DEST="$TMP/.claude/session-env"
+DEST="$TMP/.session-tracker"
 assert_eq "db.sh deployed" "yes" "$([ -f "$DEST/db.sh" ] && echo yes || echo no)"
 assert_eq "session-query.sh deployed" "yes" "$([ -f "$DEST/session-query.sh" ] && echo yes || echo no)"
 assert_eq "solidtime-sync.sh deployed" "yes" "$([ -f "$DEST/solidtime-sync.sh" ] && echo yes || echo no)"
@@ -44,7 +44,7 @@ assert_eq "deployed session-query runs" "0" "$(bash "$DEST/session-query.sh" sta
 # clamping active_seconds to the new short duration, but the statusline
 # over-reported and the Solidtime brackets (which nothing clamps) billed the
 # entire pre-clear day. Verified before the fix: stored active=100s, posted=390s.
-CS="clear-session-1"; CSD="$TMP/.claude/session-env/$CS"; mkdir -p "$CSD"
+CS="clear-session-1"; CSD="$TMP/.session-tracker/$CS"; mkdir -p "$CSD"
 printf 'P 1000\nS 1060\nP 5000\nS 5100\n' > "$CSD/events.log"
 echo '{"session_id":"'"$CS"'","source":"clear"}' | bash "$ROOT/hooks/session-start.sh" >/dev/null
 assert_eq "clear truncates events.log" "0" "$(wc -c < "$CSD/events.log" | tr -d ' ')"
@@ -53,7 +53,7 @@ assert_eq "clear leaves no stale brackets to bill" "" \
   "$(awk -v grace=120 -v t_end=9999999999 -v mode=brackets -f "$DEST/active-time.awk" "$CSD/events.log")"
 
 # resume/compact must NOT truncate — the window is still open
-RS="resume-session-1"; RSD="$TMP/.claude/session-env/$RS"; mkdir -p "$RSD"
+RS="resume-session-1"; RSD="$TMP/.session-tracker/$RS"; mkdir -p "$RSD"
 printf 'P 1000\nS 1060\n' > "$RSD/events.log"; echo 900 > "$RSD/session-tracker"
 echo '{"session_id":"'"$RS"'","source":"resume"}' | bash "$ROOT/hooks/session-start.sh" >/dev/null
 assert_eq "resume keeps events.log" "P 1000" "$(head -n1 "$RSD/events.log")"

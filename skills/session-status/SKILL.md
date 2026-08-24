@@ -9,12 +9,12 @@ Reports current Claude Code session elapsed time.
 
 ## Mechanism
 
-A `SessionStart` hook writes `$(date +%s)` to `~/.claude/session-env/<session_id>/session-tracker`. The session ID is stable across compaction, so the timestamp survives context resets.
+A `SessionStart` hook writes `$(date +%s)` to `~/.session-tracker/<session_id>/session-tracker`. The session ID is stable across compaction, so the timestamp survives context resets.
 
 `UserPromptSubmit`/`Stop` and `PreToolUse`/`PostToolUse` hooks append events to
 `events.log`: `P <ts>` (prompt), `T <ts> <tool>` / `D <ts> <tool>` (tool
 start/done), `S <ts>` (stop). **Active (working) time** is computed additively by
-the shared awk that `SessionStart` deploys to `$HOME/.claude/session-env/active-time.awk`:
+the shared awk that `SessionStart` deploys to `${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/active-time.awk`:
 each `prompt → stop` bracket counts in full, plus up to `grace` seconds of reading
 after each `Stop` (`SESSION_IDLE_THRESHOLD_SECONDS`, default 120). A session parked
 while you work elsewhere stops accruing after the grace, so the number reflects real
@@ -25,7 +25,7 @@ attention rather than wall-clock. Wall-clock elapsed is reported as secondary co
 Get the live session and today's total in one call, then render (see Output Format below for the canonical example):
 
 ```bash
-bash "$HOME/.claude/session-env/session-query.sh" status --session "${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
+bash "${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/session-query.sh" status --session "${SESSION_TRACKER_SESSION_ID:-${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}}"
 ```
 
 Returns JSON: `{source, live:{elapsed_seconds,active_seconds,started_at,issue_key}, today:{active_seconds,sessions}, sync:{configured,pending,last_error}}`. Read the keys you need; the object gains keys over time.

@@ -5,7 +5,7 @@ disable-model-invocation: true
 
 # Session History
 
-Read the session history log at `$HOME/.claude/session-env/history.jsonl` and display a summary of past sessions.
+Read the session history log at `${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/history.jsonl` and display a summary of past sessions.
 
 ## Arguments
 
@@ -22,7 +22,7 @@ Optional arguments parsed from `$ARGUMENTS`:
 
 ## Behavior
 
-1. If `$HOME/.claude/session-env/history.jsonl` does not exist, report: "No session history yet. Complete at least one session to build a log."
+1. If `${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/history.jsonl` does not exist, report: "No session history yet. Complete at least one session to build a log."
 2. Parse each JSONL line with `jq`. Each record has: `session_id`, `start_ts`, `end_ts`, `duration_seconds`, `project_dir`, `reason`.
 3. Apply the date and project filters.
 4. Print a markdown table with columns: `Date | Start | End | Duration | Project`.
@@ -41,7 +41,7 @@ jq -r '[( .start_ts | strflocaltime("%Y-%m-%d") ),
         ( .start_ts | strflocaltime("%H:%M") ),
         ( .end_ts   | strflocaltime("%H:%M") ),
         .duration_seconds,
-        .project_dir] | @tsv' "$HOME/.claude/session-env/history.jsonl"
+        .project_dir] | @tsv' "${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/history.jsonl"
 ```
 
 Apply filters before formatting, sum `duration_seconds` for the total, and render as markdown.

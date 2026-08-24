@@ -13,7 +13,8 @@ set -uo pipefail
   SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
   [ -z "$SESSION_ID" ] && exit 0
 
-  SESSION_DIR="$HOME/.claude/session-env/$SESSION_ID"
+  ST_HOME="${SESSION_TRACKER_HOME:-$HOME/.session-tracker}"
+  SESSION_DIR="$ST_HOME/$SESSION_ID"
   EVENTS_FILE="$SESSION_DIR/events.log"
 
   mkdir -p "$SESSION_DIR"

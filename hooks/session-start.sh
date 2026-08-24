@@ -4,22 +4,32 @@ set -euo pipefail
 INPUT=$(cat)
 SOURCE=$(echo "$INPUT" | jq -r '.source // "startup"')
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
+CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
 
 if [ -z "$SESSION_ID" ]; then
   exit 0
 fi
 
-SESSION_DIR="$HOME/.claude/session-env/$SESSION_ID"
+# Relocate a pre-v4 store off the legacy Claude-Code-specific path before
+# anything creates the new home — st_migrate_home only moves into a home that
+# does not exist yet (or is empty), so it has to come before the first mkdir.
+DB_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/import-history.sh"
+if [ -f "$DB_LIB" ]; then
+  # shellcheck source=/dev/null
+  . "$DB_LIB"
+  st_migrate_home 2>/dev/null || true
+  st_migrate_config 2>/dev/null || true
+fi
+
+ST_HOME="${SESSION_TRACKER_HOME:-$HOME/.session-tracker}"
+SESSION_DIR="$ST_HOME/$SESSION_ID"
 SESSION_FILE="$SESSION_DIR/session-tracker"
 
 mkdir -p "$SESSION_DIR"
 
 # Ensure the SQLite store exists and migrate any legacy history.jsonl.
 # Soft dependency: all of this is skipped silently when sqlite3 is unavailable.
-DB_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/import-history.sh"
 if [ -f "$DB_LIB" ]; then
-  # shellcheck source=/dev/null
-  . "$DB_LIB"
   st_db_init 2>/dev/null || true
   st_import_history 2>/dev/null || true
   st_backfill_worktrees 2>/dev/null || true
@@ -34,11 +44,11 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
 # lazily by file offset, so overwriting it under a live interpreter makes it
 # resume mid-file in rewritten bytes. A rename leaves the running process on its
 # own inode.
-for f in active-time.awk db.sh session-query.sh solidtime-sync.sh; do
+for f in active-time.awk db.sh session-query.sh solidtime-sync.sh reap-sessions.sh; do
   if [ -f "$LIB_DIR/$f" ]; then
-    { cp -f "$LIB_DIR/$f" "$HOME/.claude/session-env/.$f.new" \
-      && mv -f "$HOME/.claude/session-env/.$f.new" "$HOME/.claude/session-env/$f"; } 2>/dev/null \
-      || rm -f "$HOME/.claude/session-env/.$f.new" 2>/dev/null || true
+    { cp -f "$LIB_DIR/$f" "$ST_HOME/.$f.new" \
+      && mv -f "$ST_HOME/.$f.new" "$ST_HOME/$f"; } 2>/dev/null \
+      || rm -f "$ST_HOME/.$f.new" 2>/dev/null || true
   fi
 done
 
@@ -54,14 +64,28 @@ if [ "$SOURCE" = "startup" ] || [ "$SOURCE" = "clear" ] || [ ! -f "$SESSION_FILE
   : > "$SESSION_DIR/events.log" 2>/dev/null || true
 fi
 
+# Persist the cwd for reap-sessions.sh: a session that dies without a SessionEnd
+# is finalized from its own files alone, and this is the only record of which
+# project it belonged to.
+if [ -n "$CWD" ]; then
+  printf '%s\n' "$CWD" > "$SESSION_DIR/cwd" 2>/dev/null || true
+fi
+
+# Close out sessions that died without a SessionEnd (crash, kill, power loss).
+# Detached: the sweep walks every recent session dir and must not spend the
+# hook's 5s budget. Never on `compact` — same reasoning as the sync below.
+if [ "$SOURCE" != "compact" ] && [ -f "$ST_HOME/reap-sessions.sh" ]; then
+  ( bash "$ST_HOME/reap-sessions.sh" --exclude "$SESSION_ID" >/dev/null 2>&1 & ) 2>/dev/null || true
+fi
+
 # Retry any pending Solidtime syncs in the background; never blocks the hook.
 # SOLIDTIME_URL env fallback covers ephemeral hosts without a conf file.
 # Not on `compact`: it fires repeatedly inside one long session and no session
 # can have finished since the last run, so every one of those runs is a
 # guaranteed no-op that still pays for a store scan and a ledger walk.
-if [ "$SOURCE" != "compact" ] && [ -f "$HOME/.claude/session-env/solidtime-sync.sh" ] \
-   && { [ -f "$HOME/.claude/session-env/solidtime.conf" ] || [ -n "${SOLIDTIME_URL:-}" ]; }; then
-  ( bash "$HOME/.claude/session-env/solidtime-sync.sh" >/dev/null 2>&1 & ) 2>/dev/null || true
+if [ "$SOURCE" != "compact" ] && [ -f "$ST_HOME/solidtime-sync.sh" ] \
+   && { [ -f "$ST_HOME/config.yml" ] || [ -n "${SOLIDTIME_URL:-}" ]; }; then
+  ( bash "$ST_HOME/solidtime-sync.sh" >/dev/null 2>&1 & ) 2>/dev/null || true
 fi
 
 echo "CLAUDE_SESSION_FILE=$SESSION_FILE"

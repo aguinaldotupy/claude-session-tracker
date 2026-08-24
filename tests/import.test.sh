@@ -6,7 +6,7 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP"
-SE="$TMP/.claude/session-env"; mkdir -p "$SE"
+SE="$TMP/.session-tracker"; mkdir -p "$SE"
 one() { sqlite3 "$(st_db_path)" "$1"; }
 
 # history with a DUPLICATED session_id (3 cumulative snapshots) + one distinct session
@@ -42,7 +42,7 @@ assert_eq "legacy branch is NULL" "1" "$(one "SELECT branch IS NULL FROM session
 # fix #2 (superseded by resilient import below): a malformed history.jsonl no
 # longer aborts the whole migration — the valid row is now salvaged and the
 # file renamed, instead of being preserved untouched with a non-zero return.
-SE2="$HOME/.claude/session-env"
+SE2="$HOME/.session-tracker"
 printf '{"session_id":"ok","project_dir":"/p","start_ts":1,"end_ts":2,"active_seconds":5}\nNOT JSON\n' > "$SE2/history.jsonl"
 st_import_history; rc=$?
 assert_eq "malformed history salvage returns zero" "0" "$rc"
@@ -50,7 +50,7 @@ assert_eq "malformed history renamed after salvage" "no" "$([ -f "$SE2/history.j
 assert_eq "malformed history: valid row still imported" "1" "$(one "SELECT COUNT(*) FROM sessions WHERE session_id='ok';")"
 
 # a single malformed line no longer aborts the whole migration — valid rows import, bad line skipped
-SE3="$HOME/.claude/session-env"
+SE3="$HOME/.session-tracker"
 printf '%s\n' \
   '{"session_id":"g1","project_dir":"/p/a","active_seconds":30,"duration_seconds":30,"idle_seconds":0,"start_ts":10,"end_ts":40,"issue_key":"","reason":"other"}' \
   'THIS IS NOT JSON' \

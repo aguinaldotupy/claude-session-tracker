@@ -9,7 +9,7 @@ Reports aggregated Claude Code session history via the `session-query` CLI, whic
 
 ## Mechanism
 
-Each time a session ends, the `SessionEnd` hook upserts one row into the SQLite database at `$HOME/.claude/session-env/history.db` — one row per `session_id` in the `sessions` table (joined to `projects` for the canonical, worktree-grouped project). Per-session heartbeats are **not** copied into the database — the `timeline` subcommand reads them from that session's `events.log` (the `events` table holds only rows imported by versions before v3.1.2, which dropped the import because it timed out the 5s SessionEnd hook on long sessions). Because the write is an upsert keyed on `session_id`, a session that ends repeatedly (e.g. across resume) stays a single row — totals are not double-counted. When `sqlite3` is absent the hook falls back to appending one JSON line to `$HOME/.claude/session-env/history.jsonl`, which the next session imports.
+Each time a session ends, the `SessionEnd` hook upserts one row into the SQLite database at `${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/history.db` — one row per `session_id` in the `sessions` table (joined to `projects` for the canonical, worktree-grouped project). Per-session heartbeats are **not** copied into the database — the `timeline` subcommand reads them from that session's `events.log` (the `events` table holds only rows imported by versions before v3.1.2, which dropped the import because it timed out the 5s SessionEnd hook on long sessions). Because the write is an upsert keyed on `session_id`, a session that ends repeatedly (e.g. across resume) stays a single row — totals are not double-counted. When `sqlite3` is absent the hook falls back to appending one JSON line to `${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/history.jsonl`, which the next session imports.
 
 Each session row carries `active_seconds` (working time — what the table and totals report), `duration_seconds` (wall-clock, available on request), `branch`, and `issue_key`.
 
@@ -22,7 +22,7 @@ Call `session-query`, then render its JSON. The CLI owns the SQLite-vs-JSONL gua
 ### Table + total
 
 ```bash
-bash "$HOME/.claude/session-env/session-query.sh" history --range 7d --project bel
+bash "${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/session-query.sh" history --range 7d --project bel
 ```
 Filters: `--range today|yesterday|7d|30d|FROM..TO` (default today), `--project <substr>`.
 Returns `{total_active_seconds, count, rows:[{start_local,end_local,active_seconds,project,branch_issue}]}`.
@@ -31,7 +31,7 @@ Render a markdown table `| Data | Início | Fim | Trabalho | Projeto | Branch/Is
 ### Forensic timeline (single session)
 
 ```bash
-bash "$HOME/.claude/session-env/session-query.sh" timeline "$SID"
+bash "${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/session-query.sh" timeline "$SID"
 ```
 Returns `{intervals:[{prompt_local,stop_local,work_seconds,api_error,tools:[{tool,seconds,failed}]}]}`.
 Render each interval as `HH:MM prompt` / tool durations (append `✗` when `failed`) / `HH:MM stop` (append `— erro de API` when `api_error`). Empty `intervals` → "Sem timeline para a sessão".

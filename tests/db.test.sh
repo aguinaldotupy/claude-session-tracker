@@ -65,10 +65,10 @@ assert_eq "zero-padded active is base-10" "100" "$(one "SELECT active_seconds FR
 # --- SessionEnd stays fast on huge event logs (v3.1.2 timeout fix) ---
 # 20k lines through the whole hook must finish well inside the 5s hook budget.
 big_sid="perf-big"
-mkdir -p "$HOME/.claude/session-env/$big_sid"
-echo 1700000000 > "$HOME/.claude/session-env/$big_sid/session-tracker"
+mkdir -p "$HOME/.session-tracker/$big_sid"
+echo 1700000000 > "$HOME/.session-tracker/$big_sid/session-tracker"
 awk 'BEGIN{ts=1700000000; for(i=0;i<5000;i++){printf "P %d\nT %d Bash\nD %d Bash\nS %d\n", ts, ts+1, ts+2, ts+3; ts+=10}}' \
-  > "$HOME/.claude/session-env/$big_sid/events.log"
+  > "$HOME/.session-tracker/$big_sid/events.log"
 t0=$(date +%s)
 printf '{"session_id":"%s","reason":"exit","cwd":"%s"}' "$big_sid" "$repo" \
   | bash "$DIR/../hooks/session-end.sh"
@@ -95,5 +95,21 @@ assert_eq "backfill: worktree session keeps full project_dir" "/r/app/.claude/wo
 st_backfill_worktrees; rc=$?
 assert_eq "backfill idempotent (rc 0)" "0" "$rc"
 assert_eq "backfill still one /r/app project" "1" "$(one "SELECT COUNT(*) FROM projects WHERE project_root='/r/app';")"
+
+# --- an unknown project is NULL, never a projects row named "" ---
+# Same rule as branch/issue: empty means SQL NULL. Reachable through the
+# sweeper, which finalizes pre-v4 sessions that have no persisted cwd.
+st_upsert_session "no-proj-1" "" "" "" "" 1000 1060 60 60 0 stale 1700000000
+assert_eq "session still recorded" "1" \
+  "$(sqlite3 "$(st_db_path)" "SELECT COUNT(*) FROM sessions WHERE session_id='no-proj-1';")"
+assert_eq "project_id is NULL" "1" \
+  "$(sqlite3 "$(st_db_path)" "SELECT COUNT(*) FROM sessions WHERE session_id='no-proj-1' AND project_id IS NULL;")"
+assert_eq "no empty projects row invented" "0" \
+  "$(sqlite3 "$(st_db_path)" "SELECT COUNT(*) FROM projects WHERE COALESCE(project_root,'')='' OR COALESCE(name,'')='';")"
+
+# a later run that does know the project still adopts it
+st_upsert_session "no-proj-1" "/repos/found" "/repos/found" "" "" 1000 2000 1000 900 100 exit 1700000001
+assert_eq "a known project is adopted on the next write" "found" \
+  "$(sqlite3 "$(st_db_path)" "SELECT p.name FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.session_id='no-proj-1';")"
 
 finish

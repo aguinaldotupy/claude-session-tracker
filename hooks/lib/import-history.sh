@@ -16,7 +16,7 @@ _ST_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 st_import_history() {
   st_has_sqlite || return 1
   command -v jq >/dev/null 2>&1 || return 1
-  local hist; hist="$HOME/.claude/session-env/history.jsonl"
+  local hist; hist="$(st_home)/history.jsonl"
   [ -f "$hist" ] || return 0
   st_db_init || return 1
   local now db jqprog err rc

@@ -5,7 +5,7 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 
 TMP=$(mktemp -d); TMP="$(cd "$TMP" && pwd -P)"; trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP"
-SE="$HOME/.claude/session-env"
+SE="$HOME/.session-tracker"
 mkdir -p "$SE"
 # deployed libs, as session-start.sh would leave them
 cp "$DIR/../hooks/lib/active-time.awk" "$SE/active-time.awk"
@@ -20,13 +20,14 @@ assert_eq "no config no output" "" "$out"
 assert_eq "no config no log" "0" "$([ -f "$LOG" ] && echo 1 || echo 0)"
 
 # config present: run starts and logs, token never logged
-cat > "$SE/solidtime.conf" <<EOF
-SOLIDTIME_URL=https://time.test
-SOLIDTIME_TOKEN=secret-token-123
-SOLIDTIME_ORG_ID=org-1
-SOLIDTIME_MEMBER_ID=member-1
+cat > "$SE/config.yml" <<EOF
+solidtime:
+  url: https://time.test
+  token: secret-token-123
+  org_id: org-1
+  member_id: member-1
 EOF
-chmod 600 "$SE/solidtime.conf"
+chmod 600 "$SE/config.yml"
 bash "$SYNC" >/dev/null 2>&1
 assert_eq "run creates log" "1" "$([ -f "$LOG" ] && echo 1 || echo 0)"
 assert_eq "token never in log" "0" "$(grep -c 'secret-token-123' "$LOG")"
@@ -63,11 +64,11 @@ assert_eq "bare --session terminates" "0" "$rc"
 assert_eq "bare --session no output" "" "$out"
 
 # unreadable config (chmod 000) exits 0 silently
-chmod 000 "$SE/solidtime.conf"
+chmod 000 "$SE/config.yml"
 out="$(bash "$SYNC" 2>&1)"; rc=$?
 assert_eq "unreadable config exits 0" "0" "$rc"
 assert_eq "unreadable config silent" "" "$out"
-chmod 600 "$SE/solidtime.conf"
+chmod 600 "$SE/config.yml"
 
 # ---- posting with curl shim ----
 BIN="$TMP/bin"; mkdir -p "$BIN"
@@ -102,7 +103,7 @@ export PATH="$BIN:$PATH"
 # Pre-seed the cache so the pre-existing posting-flow tests (written before
 # real resolvers existed) see cache hits and keep their exact curl-call
 # counts instead of picking up extra list/create calls.
-# `scope` must match "<url>|<org>" from solidtime.conf, or the client treats the
+# `scope` must match "<url>|<org>" from config.yml, or the client treats the
 # cache as belonging to another instance/org and discards it (ids from one org
 # are rejected by another).
 PROJNAME="$(basename "$PWD")"
@@ -171,16 +172,16 @@ unset SESSION_IDLE_THRESHOLD_SECONDS
 SID3="sess-nomember"
 mkdir -p "$SE/$SID3"
 printf 'P 3000\nS 3060\n' > "$SE/$SID3/events.log"
-sed 's/^SOLIDTIME_MEMBER_ID=.*/SOLIDTIME_MEMBER_ID=/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"
-mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
+sed 's/^  member_id:.*/  member_id: /' "$SE/config.yml" > "$SE/config.yml.tmp"
+mv "$SE/config.yml.tmp" "$SE/config.yml"
 : > "$CURL_CAPTURE"; printf '500\n' > "$CURL_CTRL"
 bash "$SYNC" --session "$SID3" >/dev/null 2>&1
 assert_eq "member_id missing: auto-resolve attempted, no entry posts" "1" "$(wc -l < "$CURL_CAPTURE" | tr -d ' ')"
 assert_eq "member_id missing: error logged" "1" "$(grep -c 'ERROR member_id missing' "$LOG")"
 assert_eq "member_id missing: no ledger" "0" "$([ -f "$SE/$SID3/solidtime-synced" ] && echo 1 || echo 0)"
 : > "$CURL_CTRL"
-sed 's/^SOLIDTIME_MEMBER_ID=.*/SOLIDTIME_MEMBER_ID=member-1/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"
-mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
+sed 's/^  member_id:.*/  member_id: member-1/' "$SE/config.yml" > "$SE/config.yml.tmp"
+mv "$SE/config.yml.tmp" "$SE/config.yml"
 
 # ---- project/tag cache ----
 rm -f "$SE/solidtime-cache.json"
@@ -254,8 +255,8 @@ assert_eq "project create: client_id present and null" "1" "$(grep -c '\"client_
 assert_eq "project create: is_billable still on wire" "1" "$(grep -c '\"is_billable\":false' "$CURL_CAPTURE")"
 
 # ---- member_id auto-resolve (SOLIDTIME_MEMBER_ID absent from conf) ----
-sed 's/^SOLIDTIME_MEMBER_ID=.*/SOLIDTIME_MEMBER_ID=/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"
-mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
+sed 's/^  member_id:.*/  member_id: /' "$SE/config.yml" > "$SE/config.yml.tmp"
+mv "$SE/config.yml.tmp" "$SE/config.yml"
 SID8="sess-member-auto"; mkdir -p "$SE/$SID8"
 printf 'P 6000\nS 6100\n' > "$SE/$SID8/events.log"
 : > "$CURL_CAPTURE"; : > "$CURL_CTRL"
@@ -270,8 +271,8 @@ printf 'P 6200\nS 6260\n' > "$SE/$SID9/events.log"
 : > "$CURL_CAPTURE"
 ( cd "$TMP/repo" && bash "$SYNC" --session "$SID9" ) >/dev/null 2>&1
 assert_eq "member_id cache hit: only the entry POST" "1" "$(wc -l < "$CURL_CAPTURE" | tr -d ' ')"
-sed 's/^SOLIDTIME_MEMBER_ID=.*/SOLIDTIME_MEMBER_ID=member-1/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"
-mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
+sed 's/^  member_id:.*/  member_id: member-1/' "$SE/config.yml" > "$SE/config.yml.tmp"
+mv "$SE/config.yml.tmp" "$SE/config.yml"
 
 # ---- discovery: ended sessions without 'done' get synced ----
 . "$DIR/../hooks/lib/db.sh"
@@ -340,7 +341,7 @@ assert_eq "pre-watermark session: no ledger" "0" "$([ -f "$SE/disc-old/solidtime
 
 # ---- --check: real credential verification (GET memberships), no session sync ----
 # curl shim already returns a memberships body containing org "org-1" for
-# any GET to /memberships (see shim above); solidtime.conf's SOLIDTIME_ORG_ID
+# any GET to /memberships (see shim above); config.yml's SOLIDTIME_ORG_ID
 # is "org-1", so the default shim response is the org-found case.
 : > "$CURL_CAPTURE"; printf '200\n' > "$CURL_CTRL"
 : > "$LOG"
@@ -359,23 +360,23 @@ assert_eq "check 401: verbose credentials FAILED" "1" "$(printf '%s\n' "$out" | 
 : > "$CURL_CTRL"
 
 # ---- --check: 2xx but configured org id isn't among the memberships ----
-sed 's/^SOLIDTIME_ORG_ID=.*/SOLIDTIME_ORG_ID=org-missing/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"
-mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
+sed 's/^  org_id:.*/  org_id: org-missing/' "$SE/config.yml" > "$SE/config.yml.tmp"
+mv "$SE/config.yml.tmp" "$SE/config.yml"
 : > "$CURL_CAPTURE"; printf '200\n' > "$CURL_CTRL"
 : > "$LOG"
 out="$(bash "$SYNC" --check --verbose 2>&1)"; rc=$?
 assert_eq "check org-missing: exits 0" "0" "$rc"
 assert_eq "check org-missing: ERROR log line" "1" "$(grep -c 'ERROR check: HTTP 200 org org-missing not found' "$LOG")"
 assert_eq "check org-missing: verbose credentials FAILED" "1" "$(printf '%s\n' "$out" | grep -c '^credentials FAILED: org not found$')"
-sed 's/^SOLIDTIME_ORG_ID=.*/SOLIDTIME_ORG_ID=org-1/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"
-mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
+sed 's/^  org_id:.*/  org_id: org-1/' "$SE/config.yml" > "$SE/config.yml.tmp"
+mv "$SE/config.yml.tmp" "$SE/config.yml"
 : > "$CURL_CTRL"
 
-# ---- env-var config fallback (ephemeral environments without solidtime.conf)
+# ---- env-var config fallback (ephemeral environments without config.yml)
 # ---- config precedence: file always wins over conflicting env vars.
-# $SE/solidtime.conf currently holds URL=https://time.test TOKEN=secret-token-123
+# $SE/config.yml currently holds URL=https://time.test TOKEN=secret-token-123
 # ORG_ID=org-1 MEMBER_ID=member-1 (restored by every prior test section above).
-mv "$SE/solidtime.conf" "$SE/solidtime.conf.bak"
+mv "$SE/config.yml" "$SE/config.yml.bak"
 
 # (a) env-only config: no file, all three required vars exported -> --check
 # runs and hits the API (proves the env values were actually used to reach
@@ -410,7 +411,7 @@ assert_eq "nothing configured (no file, no env) no log" "0" "$([ -f "$LOG" ] && 
 
 # (b) file precedence: restore the file AND export conflicting env vars ->
 # the file's values are what actually go on the wire, not the env's.
-mv "$SE/solidtime.conf.bak" "$SE/solidtime.conf"
+mv "$SE/config.yml.bak" "$SE/config.yml"
 export SOLIDTIME_URL=https://envtime-conflict.test SOLIDTIME_TOKEN=env-secret-conflict SOLIDTIME_ORG_ID=org-conflict
 : > "$CURL_CAPTURE"; printf '200\n' > "$CURL_CTRL"; : > "$LOG"
 bash "$SYNC" --check >/dev/null 2>&1
@@ -457,14 +458,14 @@ fi
 # A project/member id from one org is rejected by another, so reusing them
 # wedged every future run with no recovery but deleting the cache by hand. ----
 seed_cache
-sed 's/^SOLIDTIME_ORG_ID=.*/SOLIDTIME_ORG_ID=org-other/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"
-mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
+sed 's/^  org_id:.*/  org_id: org-other/' "$SE/config.yml" > "$SE/config.yml.tmp"
+mv "$SE/config.yml.tmp" "$SE/config.yml"
 : > "$CURL_CAPTURE"; : > "$CURL_CTRL"
 bash "$SYNC" >/dev/null 2>&1
 assert_eq "org change discards cached project id" "" "$(jq -r '.projects.repo // ""' "$SE/solidtime-cache.json")"
 assert_eq "org change records the new scope" "https://time.test|org-other" "$(jq -r '.scope' "$SE/solidtime-cache.json")"
-sed 's/^SOLIDTIME_ORG_ID=.*/SOLIDTIME_ORG_ID=org-1/' "$SE/solidtime.conf" > "$SE/solidtime.conf.tmp"
-mv "$SE/solidtime.conf.tmp" "$SE/solidtime.conf"
+sed 's/^  org_id:.*/  org_id: org-1/' "$SE/config.yml" > "$SE/config.yml.tmp"
+mv "$SE/config.yml.tmp" "$SE/config.yml"
 
 # ---- regression: curl is this file's one hard dependency. Without the guard,
 # every trigger resolved an empty member_id and logged "member_id missing" --
