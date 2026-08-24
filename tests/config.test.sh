@@ -133,4 +133,42 @@ printf "SOLIDTIME_URL=https://x.test\nSOLIDTIME_TOKEN=t\nSOLIDTIME_ORG_ID=o\n" >
 HOME="$H5" st_migrate_config
 assert_eq "conversion writes no trailing space" "0" "$(grep -c ' $' "$SE5/config.yml")"
 
+# --- an empty value must not overwrite a credential coming from the environment.
+#     The file is a fallback for what the environment does not set; exporting ""
+#     turns a working env-var setup into "config incomplete". ---
+H6="$TMP/h6"; SE6="$H6/.session-tracker"; mkdir -p "$SE6"
+printf 'solidtime:\n  url: https://file.test\n  token:\n' > "$SE6/config.yml"
+out="$(HOME="$H6" SOLIDTIME_TOKEN=env-token bash -c '
+  . "$1/hooks/lib/db.sh"; st_config_load >/dev/null 2>&1
+  printf "%s|%s" "$SOLIDTIME_URL" "$SOLIDTIME_TOKEN"' _ "$ROOT")"
+assert_eq "empty value leaves the environment credential alone" "https://file.test|env-token" "$out"
+
+# --- a value containing a backslash survives a write/read round trip ---
+H7="$TMP/h7"; mkdir -p "$H7/.session-tracker"
+out="$(HOME="$H7" bash -c '
+  . "$1/hooks/lib/db.sh"
+  st_config_set solidtime token "a\\nb\\tc"
+  st_config_parse "$(st_config_file)"' _ "$ROOT")"
+assert_eq "backslashes are written literally, not expanded" 'SOLIDTIME_TOKEN=a\nb\tc' "$out"
+assert_eq "backslash value stays on one line" "1" \
+  "$(printf '%s\n' "$out" | grep -c .)"
+
+# --- the legacy conf is archived only when every required value came through.
+#     Sourcing is best-effort: an unquoted Sanctum token is a pipeline, so the
+#     assignment never sticks and the token reads back empty. Renaming the file
+#     away would leave the only copy of that credential where nothing looks. ---
+H8="$TMP/h8"; SE8="$H8/.session-tracker"; mkdir -p "$SE8"
+cat > "$SE8/solidtime.conf" <<'EOF'
+SOLIDTIME_URL=https://unquoted.test
+SOLIDTIME_TOKEN=9|unquoted-token
+SOLIDTIME_ORG_ID=org-u
+EOF
+HOME="$H8" st_migrate_config
+assert_eq "unreadable token: original is NOT archived" "yes" \
+  "$([ -f "$SE8/solidtime.conf" ] && echo yes || echo no)"
+assert_eq "unreadable token: no .migrated left behind" "no" \
+  "$([ -f "$SE8/solidtime.conf.migrated" ] && echo yes || echo no)"
+assert_eq "unreadable token: no empty token written" "0" \
+  "$(grep -c 'token:$' "$SE8/config.yml" 2>/dev/null)"
+
 finish

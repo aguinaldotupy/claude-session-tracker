@@ -25,7 +25,9 @@ _RP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXCLUDE=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --exclude) EXCLUDE="${2:-}"; shift 2 ;;
+    # `shift 2` with nothing after --exclude shifts nothing and returns 1, which
+    # spins this loop forever; take one argument when that is all there is.
+    --exclude) EXCLUDE="${2:-}"; if [ $# -ge 2 ]; then shift 2; else shift; fi ;;
     *) shift ;;
   esac
 done
@@ -50,6 +52,7 @@ done
   st_db_init 2>/dev/null || true
   NOW="$(date +%s)"
   reaped=0
+  reaped_sids=""
 
   while IFS= read -r events; do
     [ -n "$events" ] || continue
@@ -97,16 +100,23 @@ done
 
     st_upsert_session "$sid" "$root" "$cwd" "$branch" "$issue" \
       "$start" "$end" "$dur" "$active" "$idle" "stale" "$NOW" 2>/dev/null \
-      && reaped=$(( reaped + 1 ))
+      && { reaped=$(( reaped + 1 )); reaped_sids="$reaped_sids $sid"; }
   done <<LIST
 $(find "$ST_HOME" -mindepth 2 -maxdepth 2 -name events.log -mtime "-$WINDOW_DAYS" 2>/dev/null)
 LIST
 
-  # Newly-closed sessions are new work for the sync; the ledger makes the extra
-  # run a no-op when there is nothing to post.
-  if [ "$reaped" -gt 0 ] && [ -f "$ST_HOME/solidtime-sync.sh" ] \
+  # Newly-closed sessions are new work for the sync. One `--session` run each,
+  # not a plain discovery run: discovery short-circuits on any ledger that says
+  # `done`, and a session reaped once, resumed, then lost again has exactly that
+  # ledger -- its post-resume brackets would never be posted. `--session` forces
+  # the recompute, and the per-bracket ledger keys make it a no-op when nothing
+  # grew. Sequential inside one detached subshell so they queue on the sync lock
+  # instead of fighting over it. Session ids never contain whitespace.
+  if [ -n "$reaped_sids" ] && [ -f "$ST_HOME/solidtime-sync.sh" ] \
      && { [ -f "$ST_HOME/config.yml" ] || [ -n "${SOLIDTIME_URL:-}" ]; }; then
-    ( bash "$ST_HOME/solidtime-sync.sh" >/dev/null 2>&1 & ) 2>/dev/null || true
+    ( for _sid in $reaped_sids; do
+        bash "$ST_HOME/solidtime-sync.sh" --session "$_sid" >/dev/null 2>&1
+      done & ) 2>/dev/null || true
   fi
 
   printf '%s\n' "$reaped"

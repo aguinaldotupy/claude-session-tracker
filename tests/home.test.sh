@@ -60,6 +60,41 @@ HOME="$H3" st_migrate_home
 assert_eq "fresh install creates no legacy symlink" "no" \
   "$([ -e "$H3/.claude/session-env" ] && echo yes || echo no)"
 
+# --- a legacy path that is already the compatibility symlink is never moved ---
+H6="$TMP/h6"; mkdir -p "$H6/.claude" "$H6/.session-tracker"
+ln -s "$H6/.session-tracker" "$H6/.claude/session-env"
+HOME="$H6" st_migrate_home
+assert_eq "symlinked legacy path survives" "yes" \
+  "$([ -L "$H6/.claude/session-env" ] && echo yes || echo no)"
+assert_eq "symlink was not buried inside the new home" "no" \
+  "$([ -e "$H6/.session-tracker/session-env" ] && echo yes || echo no)"
+
+# --- two sessions racing: the loser must not move the winner's symlink.
+#     The window is between the "is it still a real directory?" check and the
+#     move, so it can only be reached by interposing. `mkdir` is shadowed to run
+#     the winning migration mid-flight; the RACED marker makes the test fail
+#     loudly rather than silently stop testing if that call ever goes away. ---
+H7="$TMP/h7"; L7="$H7/.claude/session-env"; N7="$H7/.session-tracker"
+mkdir -p "$L7"
+echo winner > "$L7/payload"
+RACED=""
+mkdir() {
+  command mkdir "$@"
+  if [ -z "$RACED" ] && [ -d "$L7" ] && [ ! -L "$L7" ]; then
+    RACED=yes
+    command mv "$L7" "$N7" && command ln -s "$N7" "$L7"
+  fi
+}
+HOME="$H7" st_migrate_home
+unset -f mkdir
+
+assert_eq "the race was actually staged" "yes" "$RACED"
+assert_eq "loser leaves the winner's symlink intact" "yes" \
+  "$([ -L "$L7" ] && echo yes || echo no)"
+assert_eq "legacy path still resolves to the data" "winner" "$(cat "$L7/payload" 2>/dev/null)"
+assert_eq "symlink not buried inside the new home" "no" \
+  "$([ -e "$N7/session-env" ] && echo yes || echo no)"
+
 # --- end to end through the SessionStart hook ---
 H5="$TMP/h5"; mkdir -p "$H5/.claude/session-env/old-sess"
 echo 1700000000 > "$H5/.claude/session-env/old-sess/session-tracker"

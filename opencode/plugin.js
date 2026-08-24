@@ -160,6 +160,11 @@ export const SessionTracker = async ({ directory, worktree } = {}) => {
         ensure(sessionID)
         await enqueue("stop.sh", { session_id: sessionID })
       } else if (type === "session.error") {
+        // ensure() here too, exactly as on idle: an error can be the first thing
+        // ever seen for a session, and without it the SF lands in a directory
+        // with no start timestamp — which neither dispose (the id is not in
+        // `started`) nor reap-sessions.sh (no `session-tracker` file) can close.
+        ensure(sessionID)
         await enqueue("stop-failure.sh", { session_id: sessionID })
       }
     },

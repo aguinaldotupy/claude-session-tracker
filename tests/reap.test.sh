@@ -99,4 +99,41 @@ assert_eq "SessionStart persists cwd" "$TMP" "$(cat "$H2/.session-tracker/s2/cwd
 assert_eq "SessionStart deploys the sweeper" "yes" \
   "$([ -f "$H2/.session-tracker/reap-sessions.sh" ] && echo yes || echo no)"
 
+# --- a dangling `--exclude` must terminate, not spin.
+#     `shift 2` with nothing left to shift fails and shifts nothing, so the
+#     argument loop never advances. Not reachable from the hook, which always
+#     passes a session id, but reachable from any manual run. ---
+if command -v timeout >/dev/null 2>&1; then
+  timeout 5 bash "$REAP" --exclude >/dev/null 2>&1; rc=$?
+  assert_eq "dangling --exclude terminates" "0" "$rc"
+else
+  ( bash "$REAP" --exclude >/dev/null 2>&1 ) & _pid=$!
+  ( sleep 5; kill -9 "$_pid" 2>/dev/null ) & _killer=$!
+  wait "$_pid" 2>/dev/null; rc=$?
+  kill "$_killer" 2>/dev/null
+  assert_eq "dangling --exclude terminates" "0" "$rc"
+fi
+
+# --- each reaped session is synced by id, not by a plain discovery run.
+#     Discovery short-circuits on any ledger that says `done`, and a session
+#     reaped once, resumed, then lost again has exactly that ledger -- its
+#     post-resume brackets would never be posted. Only --session recomputes. ---
+printf 'solidtime:\n  url: https://x.test\n  token: t\n  org_id: o\n' > "$ENV_DIR/config.yml"
+cat > "$ENV_DIR/solidtime-sync.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s
+' "$*" >> "$HOME/.session-tracker/sync-calls"
+STUB
+: > "$ENV_DIR/sync-calls"
+mk resync-1 2000 2060 >/dev/null
+bash "$REAP" >/dev/null
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  grep -q 'resync-1' "$ENV_DIR/sync-calls" 2>/dev/null && break
+  sleep 0.2
+done
+assert_eq "sync is invoked for the reaped session by id" "--session resync-1" \
+  "$(grep 'resync-1' "$ENV_DIR/sync-calls" 2>/dev/null | head -n1)"
+assert_eq "no plain discovery run instead" "0" \
+  "$(grep -c '^$' "$ENV_DIR/sync-calls" 2>/dev/null)"
+
 finish

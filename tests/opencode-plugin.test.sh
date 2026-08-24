@@ -99,6 +99,26 @@ PLUGIN="$ROOT/opencode/plugin.js" PROJ="$PROJ" "$RUNTIME" "$TMP/shapes.mjs" 2>/d
 assert_eq "session id found under info.id" "T" \
   "$(awk 'NR==1{print $1}' "$SE/oc-nested/events.log" 2>/dev/null)"
 
+# --- an error can be the first thing ever seen for a session.
+#     Without initialising it, the SF lands in a directory with no start
+#     timestamp: dispose never sees the id, and the sweeper skips it for lack of
+#     a session-tracker file. The session would vanish silently. ---
+cat > "$TMP/errfirst.mjs" <<'JS'
+const { SessionTracker } = await import(process.env.PLUGIN)
+const hooks = await SessionTracker({ directory: process.env.PROJ, worktree: process.env.PROJ })
+await hooks.event({ event: { type: "session.error", properties: { sessionID: "oc-err" } } })
+await hooks.dispose()
+JS
+PLUGIN="$ROOT/opencode/plugin.js" PROJ="$PROJ" SID="$SID" "$RUNTIME" "$TMP/errfirst.mjs" 2>/dev/null
+assert_eq "error-first session gets a start timestamp" "yes" \
+  "$([ -s "$SE/oc-err/session-tracker" ] && echo yes || echo no)"
+assert_eq "error-first session records SF" "SF" \
+  "$(awk '$1=="SF"{print $1; exit}' "$SE/oc-err/events.log" 2>/dev/null)"
+if command -v sqlite3 >/dev/null 2>&1; then
+  assert_eq "error-first session is closed by dispose" "1" \
+    "$(sqlite3 "$SE/history.db" "SELECT COUNT(*) FROM sessions WHERE session_id='oc-err';" 2>/dev/null)"
+fi
+
 # --- a missing plugin root must disable the shim, never throw ---
 cat > "$TMP/norooot.mjs" <<'JS'
 const { SessionTracker } = await import(process.env.PLUGIN)

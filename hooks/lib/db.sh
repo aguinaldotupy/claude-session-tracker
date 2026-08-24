@@ -28,6 +28,11 @@ st_migrate_home() {
     rmdir "$new" 2>/dev/null || return 0
   fi
   mkdir -p "$(dirname "$new")" 2>/dev/null || return 0
+  # Re-check right before the move: two sessions can start at once, and if the
+  # other one already migrated, `legacy` is now the symlink it left behind --
+  # `mv` would drop that symlink *inside* the new home and delete the path every
+  # already-pasted statusline snippet still resolves through.
+  if [ -L "$legacy" ]; then return 0; fi
   mv "$legacy" "$new" 2>/dev/null || return 0
   ln -s "$new" "$legacy" 2>/dev/null || true
 }
@@ -87,12 +92,19 @@ st_config_parse() {
 
 # Export every key in config.yml. Non-zero when the file is absent/unreadable so
 # callers can tell "no config" from "config that set nothing".
+#
+# A key with no value is skipped, never exported as "": the env-var config mode
+# (SOLIDTIME_* provisioned by an ephemeral host) is a *fallback* for whatever the
+# file does not set, and exporting an empty string would overwrite a working
+# credential with nothing -- which is exactly the shape st_migrate_config
+# produces for a legacy conf whose token it could not read.
 st_config_load() {
   local f name value
   f="$(st_config_file)"
   [ -r "$f" ] || return 1
   while IFS='=' read -r name value; do
     [ -n "$name" ] || continue
+    [ -n "$value" ] || continue
     export "$name=$value"
   done <<CONFIG
 $(st_config_parse "$f")
@@ -122,7 +134,12 @@ st_config_set() {
   mkdir -p "$(dirname "$f")" 2>/dev/null || return 1
   if [ ! -f "$f" ]; then ( umask 077; : > "$f" ) 2>/dev/null || return 1; fi
   tmp="$f.tmp.$$"
-  awk -v sec="$section" -v key="$key" -v val="$(_st_yaml_val "$value")" '
+  # The value travels in the environment, not through `-v`: awk expands escape
+  # sequences in a -v assignment, so a token containing a backslash would be
+  # written back mangled.
+  ST_CFG_VAL="$(_st_yaml_val "$value")" \
+  awk -v sec="$section" -v key="$key" '
+    BEGIN { val = ENVIRON["ST_CFG_VAL"] }
     function emit(k, v) { if (v == "") print "  " k ":"; else print "  " k ": " v }
     BEGIN { cur = ""; done = 0; seen = 0 }
     {
@@ -183,16 +200,24 @@ st_migrate_config() {
     umask 077
     {
       printf '# session-tracker configuration\n'
-      printf '# Converted from solidtime.conf; the original is kept as solidtime.conf.migrated.\n\n'
+      printf '# Converted from solidtime.conf; the original is kept beside this file.\n\n'
       printf 'solidtime:\n'
-      _st_yaml_line url    "$url"
-      _st_yaml_line token  "$token"
-      _st_yaml_line org_id "$org"
-      _st_yaml_line member_id "$member"
+      [ -n "$url" ]    && _st_yaml_line url    "$url"
+      [ -n "$token" ]  && _st_yaml_line token  "$token"
+      [ -n "$org" ]    && _st_yaml_line org_id "$org"
+      [ -n "$member" ] && _st_yaml_line member_id "$member"
+      true
     } > "$new"
   ) 2>/dev/null || return 0
   chmod 600 "$new" 2>/dev/null || true
-  mv "$legacy" "$legacy.migrated" 2>/dev/null || true
+  # Archive the original only once all three required values actually came
+  # through. Sourcing is best-effort by nature -- an unquoted Sanctum token
+  # (`SOLIDTIME_TOKEN=1|abc` is a pipeline, so the assignment never sticks)
+  # reads back empty -- and renaming it away would leave the only copy of that
+  # credential under a name nothing looks at.
+  if [ -n "$url" ] && [ -n "$token" ] && [ -n "$org" ]; then
+    mv "$legacy" "$legacy.migrated" 2>/dev/null || true
+  fi
 }
 
 
