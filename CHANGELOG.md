@@ -5,6 +5,51 @@ All notable changes to this plugin are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-08-24
+
+### Added
+- **Sync finished sessions to Solidtime (optional).** Point the plugin at a
+  [Solidtime](https://github.com/solidtime-io/solidtime) instance — self-hosted
+  or `solidtime.io` — and every session that ends is posted there as time
+  entries, one per prompt→stop engagement, so a session's entries sum to the
+  same active time the plugin reports locally. Projects are created by name and
+  the session's issue key (e.g. `LIN-456`) becomes a Solidtime tag, which gives
+  users working across several machines one unified dashboard. Set it up with
+  `/session-tracker:sync-setup`; run or inspect it with `/session-tracker:sync`.
+  Nothing changes for anyone who doesn't configure it: with no config the sync
+  paths exit immediately, make no network calls, and write no new files.
+- Sync is local-first and never blocks a hook. Hooks launch it detached, a
+  Solidtime instance that is down for days loses nothing (every finished
+  session waits in the local store and retries on the next session start), and
+  a per-session ledger keeps replays idempotent — including sessions resumed
+  after a sync, which post only the work added since.
+- Sync health is visible: failures always land in
+  `~/.claude/session-env/solidtime-sync.log`, and `session-status` reports a
+  `sync` object with the pending count and the last error.
+- Ephemeral environments (CI, cloud sessions, sandbox VMs) can configure sync
+  with `SOLIDTIME_URL` / `SOLIDTIME_TOKEN` / `SOLIDTIME_ORG_ID` environment
+  variables instead of a config file. The file wins when both are present.
+
+### Fixed
+- **Ending a long session could hang Claude Code for minutes.** The SessionEnd
+  hook copied `events.log` into SQLite one row per shelled-out subprocess
+  (~1.35 ms per line), so a session with a few thousand events blew the hook's
+  5 s budget — worst observed: over two minutes, with the session's timeline
+  rolled back when the hook was killed. That import is gone; the timeline is
+  read from `events.log`, which is where it already fell back to. The `events`
+  table is kept for rows written by older versions.
+- **`/clear` left stale events behind.** Clearing a session resets its start
+  timestamp but reused the same session id, and `events.log` was not truncated
+  with it — so the statusline kept reporting the pre-clear total, and (once
+  sync existed) the whole pre-clear window was billed to Solidtime. The
+  timestamp and the event log are now reset together, matching what
+  `/session-tracker:reset-session` always did.
+
+### Changed
+- The read-side libraries are deployed with an atomic rename instead of an
+  in-place copy, so a sync still running from a previous session cannot be
+  overwritten mid-execution.
+
 ## [3.1.1] - 2026-07-16
 
 ### Fixed
@@ -181,6 +226,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: `SessionStart` hook + `session-status` skill + optional
   statusline snippet for live elapsed time.
 
+[3.2.0]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v3.1.1...v3.2.0
 [3.1.1]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v3.1.0...v3.1.1
 [3.1.0]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v3.0.2...v3.1.0
 [3.0.2]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v3.0.1...v3.0.2
