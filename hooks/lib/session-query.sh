@@ -51,9 +51,31 @@ EOF
     tcount="$(jq -s 'map(select((.start_ts|strflocaltime("%Y-%m-%d"))==(now|strflocaltime("%Y-%m-%d")))) | group_by(.session_id) | length' "$(_sq_hist)" 2>/dev/null)"
   fi
   tsecs="$(_sq_int "$tsecs")"; tcount="$(_sq_int "$tcount")"
+  local sync_conf=false sync_pending=0 sync_err=""
+  local senv="$HOME/.claude/session-env"
+  if [ -f "$senv/solidtime.conf" ] || [ -n "${SOLIDTIME_URL:-}" ]; then
+    sync_conf=true
+    # Published by solidtime-sync.sh at the end of every run — the writer already
+    # walks the pending list, so the read side just reads the number. Deriving it
+    # here cost a store scan plus one `grep` per session ledger in the last 30
+    # days on every statusline render (measured +35ms, ~+89% on this function),
+    # and it read wrong before the first sync run: with no watermark file yet it
+    # counted every session of the last 30 days as pending, i.e. exactly the
+    # "healthy sync looks permanently stuck" case it was meant to avoid.
+    sync_pending="$(_sq_int "$(head -n1 "$senv/solidtime-pending" 2>/dev/null | tr -d '[:space:]')")"
+    # Only errors from the most recent run: an ERROR a later successful run has
+    # already moved past must not stay pinned in the statusline forever. A
+    # credential `--check` counts as such a run — it never logs "sync run start",
+    # so without it here a 401 stayed pinned after sync-setup fixed the token,
+    # and /sync kept telling the user to re-run the setup they just completed.
+    # Order matters: a failing check line matches both rules and the second wins.
+    sync_err="$(awk '/sync run start|check: HTTP/{e=""} / ERROR /{e=$0} END{if (e != "") print e}' \
+                  "$senv/solidtime-sync.log" 2>/dev/null)"
+  fi
   jq -n --arg source "$src" --argjson elapsed "$live_elapsed" --argjson active "$live_active" \
         --argjson started "$start_ts" --arg issue "$issue" --argjson tsecs "$tsecs" --argjson tcount "$tcount" \
-    '{source:$source, live:{elapsed_seconds:$elapsed, active_seconds:$active, started_at:$started, issue_key:$issue}, today:{active_seconds:$tsecs, sessions:$tcount}}'
+        --argjson sconf "$sync_conf" --argjson spend "$sync_pending" --arg serr "$sync_err" \
+    '{source:$source, live:{elapsed_seconds:$elapsed, active_seconds:$active, started_at:$started, issue_key:$issue}, today:{active_seconds:$tsecs, sessions:$tcount}, sync:{configured:$sconf, pending:$spend, last_error:$serr}}'
 }
 
 # SQL WHERE fragment (on start_ts) for a --range value. Portable: SQLite date().
@@ -123,18 +145,22 @@ sq_history() {
     '{source:$source, total_active_seconds:$total, count:$count, rows:$rows}'
 }
 
-# Forensic timeline. Events come from the SQLite `events` table when present,
-# else the live events.log. The awk pairs T/D per tool, flags DF (failed) and SF
-# (api_error), and emits one JSON object per line; the shell wraps into intervals.
+# Forensic timeline. Events come from the live events.log when it exists, else
+# the SQLite `events` table (rows left by versions that still imported the log —
+# those are frozen at their import and go stale once a session is resumed). The
+# awk pairs T/D per tool, flags DF (failed) and SF (api_error), and emits one
+# JSON object per line; the shell wraps into intervals.
 sq_timeline() {
   local sid="${1:-}" src rows
   src="$(_sq_source)"
   local ev_src=""
-  if st_has_sqlite && [ -f "$(st_db_path)" ] \
-     && [ "$(sqlite3 "$(st_db_path)" "SELECT COUNT(*) FROM events WHERE session_id='$(st_sql_escape "$sid")';" 2>/dev/null)" -gt 0 ] 2>/dev/null; then
-    ev_src="$(sqlite3 -separator ' ' "$(st_db_path)" "SELECT kind, ts, COALESCE(tool,'') FROM events WHERE session_id='$(st_sql_escape "$sid")' ORDER BY ts;" 2>/dev/null)"
-  elif [ -f "$HOME/.claude/session-env/$sid/events.log" ]; then
+  # -s, not -f: the reset-session skill truncates events.log to zero bytes, and
+  # an empty file must not shadow the rows a pre-v3.1.2 import left in `events`
+  # (that shadowing turned a populated timeline into an empty one).
+  if [ -s "$HOME/.claude/session-env/$sid/events.log" ]; then
     ev_src="$(cat "$HOME/.claude/session-env/$sid/events.log" 2>/dev/null)"
+  elif st_has_sqlite && [ -f "$(st_db_path)" ]; then
+    ev_src="$(sqlite3 -separator ' ' "$(st_db_path)" "SELECT kind, ts, COALESCE(tool,'') FROM events WHERE session_id='$(st_sql_escape "$sid")' ORDER BY ts;" 2>/dev/null)"
   fi
   rows="$(printf '%s\n' "$ev_src" | awk '
     function flush(){

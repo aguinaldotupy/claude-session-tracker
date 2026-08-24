@@ -152,6 +152,28 @@ Then post your worklog to whichever issue tracker MCP you have connected:
 
 See `commands/tag.md` and `commands/worklog.md` for full details.
 
+## Sync to Solidtime (optional)
+
+Optionally sync finished sessions to a [Solidtime](https://github.com/solidtime-io/solidtime) instance (self-hosted or `solidtime.io`) for a unified, multi-machine dashboard. Each active-time bracket (a prompt→stop engagement, the same accounting used everywhere else in the plugin) becomes one Solidtime time entry, so a session's entries sum to its active time. The project is auto-created by name, and the session's issue key (e.g. `LIN-456`) becomes a Solidtime tag.
+
+Set it up with:
+
+```
+/session-tracker:sync-setup
+```
+
+which walks you through creating an API token in the Solidtime UI, finding the organization id, and saves them to `~/.claude/session-env/solidtime.conf` (created `chmod 600` — the token is sent only to the instance you configured in `SOLIDTIME_URL`, and is never written to any other file or log). Use an `https://` URL unless your instance is on a trusted local network: the token travels as a bearer header, so a plain `http://` URL sends it in the clear.
+
+Headless or ephemeral environments (CI, cloud, sandbox VMs) where writing that file is awkward can instead set `SOLIDTIME_URL`, `SOLIDTIME_TOKEN`, and `SOLIDTIME_ORG_ID` as environment variables. The file, when present, always takes precedence over the environment.
+
+Sync is background and local-first: hooks never wait on the network, and a Solidtime instance that's down for days loses nothing — every finished session stays in the local store until it syncs. It runs on three triggers: automatically in the background right after a session ends, again on the next `SessionStart` to retry anything still pending, and on demand via `/session-tracker:sync`. Only sessions that end after you configure sync are sent — history recorded before setup stays local, so turning sync on never floods your Solidtime account with past work. Trigger a sync manually, or check sync health (pending count, last error), with:
+
+```
+/session-tracker:sync
+```
+
+or ask naturally ("sync my time to Solidtime", "is sync working?"). Sync activity is logged to `~/.claude/session-env/solidtime-sync.log` (self-rotating). See `commands/sync.md`, `commands/sync-setup.md`, `skills/sync/SKILL.md`, and `docs/superpowers/specs/2026-08-21-solidtime-sync-design.md` for full details.
+
 ## Status Line (optional)
 
 To show elapsed time in the status line, copy the contents of `statusline-snippet.sh` into your `~/.claude/statusline-command.sh`.
@@ -200,6 +222,9 @@ claude plugin update session-tracker@aguinaldotupy --scope user
   JSON-lines log (`history.jsonl`) for the same reads. Install `sqlite3` to
   get the relational store, correct cross-session totals, and per-project
   (worktree-aware) grouping. Present by default on macOS.
+- **`curl`** — required only for the optional Solidtime sync (see above).
+  Without it, sync logs one line to `~/.claude/session-env/solidtime-sync.log`
+  and stays inert; everything else is unaffected. Present by default on macOS.
 - **Native Windows** is not supported directly — use WSL or Git Bash, since
   the hooks and `session-query` are POSIX shell/`awk`.
 

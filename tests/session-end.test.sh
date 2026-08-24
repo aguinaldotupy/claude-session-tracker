@@ -38,12 +38,12 @@ printf 'P 1000\nT 1005 Read\nD 1040 Read\nS 1060\n' > "$SD/events.log"
 echo '{"session_id":"'"$SIDB"'","reason":"other","cwd":"'"$TMP"'"}' | bash "$ROOT/hooks/session-end.sh" >/dev/null
 DB="$TMP/.claude/session-env/history.db"
 assert_eq "session row written" "1" "$(sqlite3 "$DB" "SELECT COUNT(*) FROM sessions WHERE session_id='$SIDB';")"
-assert_eq "events archived" "4" "$(sqlite3 "$DB" "SELECT COUNT(*) FROM events WHERE session_id='$SIDB';")"
+assert_eq "events not archived (v3.1.2: dropped slow import)" "0" "$(sqlite3 "$DB" "SELECT COUNT(*) FROM events WHERE session_id='$SIDB';")"
 
 # repeated SessionEnd (resume): still one row
 echo '{"session_id":"'"$SIDB"'","reason":"resume","cwd":"'"$TMP"'"}' | bash "$ROOT/hooks/session-end.sh" >/dev/null
 assert_eq "resume keeps one row" "1" "$(sqlite3 "$DB" "SELECT COUNT(*) FROM sessions WHERE session_id='$SIDB';")"
-assert_eq "events not duplicated on resume" "4" "$(sqlite3 "$DB" "SELECT COUNT(*) FROM events WHERE session_id='$SIDB';")"
+assert_eq "events still not archived on resume" "0" "$(sqlite3 "$DB" "SELECT COUNT(*) FROM events WHERE session_id='$SIDB';")"
 
 # fallback: with sqlite3 masked off PATH, SessionEnd appends legacy JSONL
 SIDF="fallback-1"; SDF="$TMP/.claude/session-env/$SIDF"; mkdir -p "$SDF"
@@ -59,5 +59,28 @@ PATH="$FAKEBIN" bash "$ROOT/hooks/session-end.sh" <<< '{"session_id":"'"$SIDF"'"
 assert_eq "fallback wrote jsonl" "yes" "$([ -f "$TMP/.claude/session-env/history.jsonl" ] && grep -q "$SIDF" "$TMP/.claude/session-env/history.jsonl" && echo yes || echo no)"
 assert_eq "fallback jsonl active_seconds correct" "180" "$(jq -r 'select(.session_id=="'"$SIDF"'") | .active_seconds' "$TMP/.claude/session-env/history.jsonl")"
 assert_eq "fallback jsonl idle = duration - active" "yes" "$(jq -r 'select(.session_id=="'"$SIDF"'") | (if .idle_seconds == .duration_seconds - .active_seconds then "yes" else "no" end)' "$TMP/.claude/session-env/history.jsonl")"
+
+# --- Solidtime background launch: hook returns fast, sync runs async ---
+SIDL="solidtime-launch-1"; SDL="$TMP/.claude/session-env/$SIDL"; mkdir -p "$SDL"
+echo "5000" > "$SDL/session-tracker"
+printf 'P 5000\nS 5060\n' > "$SDL/events.log"
+cat > "$TMP/.claude/session-env/solidtime.conf" <<'EOF'
+SOLIDTIME_URL=https://time.test
+EOF
+cat > "$TMP/.claude/session-env/solidtime-sync.sh" <<'STUB'
+#!/usr/bin/env bash
+sleep 0.3
+touch "$HOME/launched"
+STUB
+chmod +x "$TMP/.claude/session-env/solidtime-sync.sh"
+
+SECONDS=0
+echo '{"session_id":"'"$SIDL"'","reason":"exit","cwd":"'"$TMP"'"}' | bash "$ROOT/hooks/session-end.sh" >/dev/null
+ELAPSED=$SECONDS
+assert_eq "hook returns fast" "yes" "$([ "$ELAPSED" -lt 2 ] && echo yes || echo no)"
+
+i=0
+while [ $i -lt 20 ] && [ ! -f "$TMP/launched" ]; do sleep 0.1; i=$((i + 1)); done
+assert_eq "solidtime-sync launched in background" "yes" "$([ -f "$TMP/launched" ] && echo yes || echo no)"
 
 finish

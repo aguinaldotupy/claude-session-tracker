@@ -62,38 +62,21 @@ assert_eq "quote path stored" "$TMP/o'brien" "$(one "SELECT project_dir FROM ses
 st_upsert_session "sPad" "$repo" "$repo" "" "" 0100 0100 0100 0100 0 "other" 0100
 assert_eq "zero-padded active is base-10" "100" "$(one "SELECT active_seconds FROM sessions WHERE session_id='sPad';")"
 
-# --- st_import_events ---
-st_db_init
-# session row must exist first (FK target)
-st_upsert_session "sE" "$repo" "$repo" "main" "" 2000 2100 100 80 20 "other" 2101
-printf 'P 2000\nT 2005 Read\nD 2017 Read\nDF 2050 Bash\nSF 2100\n' > "$TMP/ev.log"
-
-st_import_events "sE" "$TMP/ev.log"
-assert_eq "events imported" "5" "$(one "SELECT COUNT(*) FROM events WHERE session_id='sE';")"
-assert_eq "DF kind stored" "1" "$(one "SELECT COUNT(*) FROM events WHERE session_id='sE' AND kind='DF';")"
-assert_eq "tool captured" "Read" "$(one "SELECT tool FROM events WHERE session_id='sE' AND kind='T';")"
-
-# re-import is idempotent (delete-then-insert), not additive
-st_import_events "sE" "$TMP/ev.log"
-assert_eq "re-import no dup" "5" "$(one "SELECT COUNT(*) FROM events WHERE session_id='sE';")"
-
-# malformed lines are skipped
-printf 'garbage\nP notanumber\nP 2200\n' > "$TMP/bad.log"
-st_import_events "sE" "$TMP/bad.log"
-assert_eq "only valid line kept" "1" "$(one "SELECT COUNT(*) FROM events WHERE session_id='sE';")"
-
-# missing log is a clean no-op: returns 0, inserts nothing new
-before=$(one "SELECT COUNT(*) FROM events WHERE session_id='sE';")
-st_import_events "sE" "$TMP/does-not-exist.log"; rc=$?
-after=$(one "SELECT COUNT(*) FROM events WHERE session_id='sE';")
-assert_eq "missing log returns 0" "0" "$rc"
-assert_eq "missing log inserts nothing" "$before" "$after"
-
-# a no-tool kind (S) is stored with tool IS NULL, not empty string
-st_upsert_session "sNull" "$repo" "$repo" "" "" 4000 4100 100 80 20 "other" 4101
-printf 'P 4000\nS 4100\n' > "$TMP/null.log"
-st_import_events "sNull" "$TMP/null.log"
-assert_eq "no-tool kind stores NULL" "2" "$(one "SELECT COUNT(*) FROM events WHERE session_id='sNull' AND tool IS NULL;")"
+# --- SessionEnd stays fast on huge event logs (v3.1.2 timeout fix) ---
+# 20k lines through the whole hook must finish well inside the 5s hook budget.
+big_sid="perf-big"
+mkdir -p "$HOME/.claude/session-env/$big_sid"
+echo 1700000000 > "$HOME/.claude/session-env/$big_sid/session-tracker"
+awk 'BEGIN{ts=1700000000; for(i=0;i<5000;i++){printf "P %d\nT %d Bash\nD %d Bash\nS %d\n", ts, ts+1, ts+2, ts+3; ts+=10}}' \
+  > "$HOME/.claude/session-env/$big_sid/events.log"
+t0=$(date +%s)
+printf '{"session_id":"%s","reason":"exit","cwd":"%s"}' "$big_sid" "$repo" \
+  | bash "$DIR/../hooks/session-end.sh"
+t1=$(date +%s)
+elapsed=$((t1 - t0))
+assert_eq "session-end under 5s on 20k events" "1" "$([ "$elapsed" -lt 5 ] && echo 1 || echo 0)"
+one2() { sqlite3 "$(st_db_path)" "$1"; }
+assert_eq "big session row recorded" "1" "$(one2 "SELECT COUNT(*) FROM sessions WHERE session_id='$big_sid';")"
 
 # --- st_backfill_worktrees (v3.0.2): fix DBs migrated before worktree collapsing ---
 # simulate the OLD fragmented state: project_root == project_dir == worktree path

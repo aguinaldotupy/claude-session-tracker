@@ -9,7 +9,7 @@ Reports aggregated Claude Code session history via the `session-query` CLI, whic
 
 ## Mechanism
 
-Each time a session ends, the `SessionEnd` hook upserts one row into the SQLite database at `$HOME/.claude/session-env/history.db` — one row per `session_id` in the `sessions` table (joined to `projects` for the canonical, worktree-grouped project), plus that session's heartbeats in `events`. Because the write is an upsert keyed on `session_id`, a session that ends repeatedly (e.g. across resume) stays a single row — totals are not double-counted. When `sqlite3` is absent the hook falls back to appending one JSON line to `$HOME/.claude/session-env/history.jsonl`, which the next session imports.
+Each time a session ends, the `SessionEnd` hook upserts one row into the SQLite database at `$HOME/.claude/session-env/history.db` — one row per `session_id` in the `sessions` table (joined to `projects` for the canonical, worktree-grouped project). Per-session heartbeats are **not** copied into the database — the `timeline` subcommand reads them from that session's `events.log` (the `events` table holds only rows imported by versions before v3.1.2, which dropped the import because it timed out the 5s SessionEnd hook on long sessions). Because the write is an upsert keyed on `session_id`, a session that ends repeatedly (e.g. across resume) stays a single row — totals are not double-counted. When `sqlite3` is absent the hook falls back to appending one JSON line to `$HOME/.claude/session-env/history.jsonl`, which the next session imports.
 
 Each session row carries `active_seconds` (working time — what the table and totals report), `duration_seconds` (wall-clock, available on request), `branch`, and `issue_key`.
 

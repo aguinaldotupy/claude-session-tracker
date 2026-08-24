@@ -48,4 +48,64 @@ assert_eq "SF closes like S" "60" "$(printf 'P 1000\nSF 1060\n' | active 120 106
 # SF then parked: only grace credited after the failed stop (60 + 120)
 assert_eq "SF then parked credits grace" "180" "$(printf 'P 1000\nSF 1060\n' | active 120 5000)"
 
+brackets() { awk -v grace="$1" -v t_end="$2" -v mode=brackets -f "$AWK" | tr '\n' ';'; }
+
+# One interval, parked: single bracket includes the grace tail
+assert_eq "brackets: parked" "1000 1180;" "$(printf 'P 1000\nS 1060\n' | brackets 120 5000)"
+
+# Short gap: first bracket ends where the next begins
+assert_eq "brackets: short gap" "1000 1100;1100 1160;" "$(printf 'P 1000\nS 1060\nP 1100\nS 1160\n' | brackets 120 1160)"
+
+# Long gap capped: first bracket ends at stop+grace
+assert_eq "brackets: capped gap" "1000 1180;1300 1360;" "$(printf 'P 1000\nS 1060\nP 1300\nS 1360\n' | brackets 120 1360)"
+
+# Open bracket runs to t_end
+assert_eq "brackets: live open" "1000 1100;" "$(printf 'P 1000\n' | brackets 120 1100)"
+
+# Empty log: no output
+assert_eq "brackets: empty" "" "$(printf '' | brackets 120 1000)"
+
+# Sum of brackets equals scalar output on a mixed scenario
+mixed='P 1000\nT 1005 Edit\nD 1040 Edit\nS 1060\nP 1300\nSF 1360\n'
+scalar_out="$(printf "$mixed" | active 120 5000)"
+sum_out="$(printf "$mixed" | awk -v grace=120 -v t_end=5000 -v mode=brackets -f "$AWK" | awk '{s+=$2-$1} END{printf "%d", s+0}')"
+assert_eq "brackets sum equals scalar" "$scalar_out" "$sum_out"
+
+# Out-of-order input: brackets clamped to chronological non-overlapping pairs
+assert_eq "brackets: out-of-order" "1000 1060;1060 1070;" "$(printf 'P 1000\nS 1060\nP 1050\nS 1070\n' | brackets 120 1070)"
+
+# Log starting with a Stop (plugin installed mid-response, or reset-session
+# truncating the log mid-turn): no engagement was opened, but the scalar still
+# credits the reading grace after that stop, so a bracket must cover it —
+# anchored at the stop itself, never clamped back to epoch 0.
+assert_eq "brackets: leading stop" "1060 1180;" "$(printf 'S 1060\n' | brackets 120 5000)"
+assert_eq "brackets: leading stop then prompt" "1060 1100;1100 1200;" "$(printf 'S 1060\nP 1100\nS 1200\n' | brackets 120 1200)"
+
+# ...and the sum still equals the scalar on exactly those logs — the invariant
+# Solidtime bills against, asserted where it used to silently under-report.
+sum_of() { printf "$1" | awk -v grace=120 -v t_end="$2" -v mode=brackets -f "$AWK" | awk '{s+=$2-$1} END{printf "%d", s+0}'; }
+lead='S 1060\nP 1100\nS 1200\n'
+assert_eq "brackets sum equals scalar (leading stop)" "$(printf "$lead" | active 120 1200)" "$(sum_of "$lead" 1200)"
+lead2='S 1060\n'
+assert_eq "brackets sum equals scalar (lone leading stop)" "$(printf "$lead2" | active 120 5000)" "$(sum_of "$lead2" 5000)"
+
+# Malformed lines (truncated append, or a hook that ran with no `date` on PATH)
+# carry no timestamp: $2+0 is 0. Dropped in BOTH modes — scalar must not open an
+# engagement at the epoch, and brackets must never post a 55-year time entry.
+assert_eq "malformed line ignored (scalar)" "60" "$(printf 'P\nP 1000\nS 1060\n' | active 120 1060)"
+assert_eq "malformed line ignored (brackets)" "1000 1060;" "$(printf 'P\nP 1000\nS 1060\n' | brackets 120 1060)"
+assert_eq "non-numeric ts ignored (brackets)" "1000 1060;" "$(printf 'P notanumber\nP 1000\nS 1060\n' | brackets 120 1060)"
+
+# Zero-width bracket after clamp is dropped; only valid bracket emitted
+assert_eq "brackets: zero-width" "1000 1005;" "$(printf 'P 1000\nS 1000\nP 1000\nS 1005\n' | brackets 120 1005)"
+
+# Back-to-back stops (StopFailure then Stop, no prompt between): the engagement
+# closed at the FIRST stop, and the scalar only credits grace after the LAST, so
+# the bracket must end at first_stop+credit — ending it at the last stop would
+# bill the dead span between the two stops that active time never counted.
+consec='P 1000\nSF 1100\nS 1150\n'
+assert_eq "brackets: consecutive stops" "1000 1150;" "$(printf "$consec" | brackets 120 1200)"
+assert_eq "brackets sum equals scalar (consecutive stops)" "$(printf "$consec" | active 120 1200)" \
+  "$(printf "$consec" | awk -v grace=120 -v t_end=1200 -v mode=brackets -f "$AWK" | awk '{s+=$2-$1} END{printf "%d", s+0}')"
+
 finish

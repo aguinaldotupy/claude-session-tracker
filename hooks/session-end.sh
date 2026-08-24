@@ -72,12 +72,22 @@ set -uo pipefail
     BRANCH="$(git -C "$CWD" branch --show-current 2>/dev/null || true)"
   fi
 
+  # Detached, never blocking. SOLIDTIME_URL env fallback covers ephemeral hosts
+  # without a conf file. Fired on both store paths — a host without sqlite3 gets
+  # its sessions synced at SessionEnd too, not only on the next SessionStart.
+  kick_solidtime_sync() {
+    [ -f "$HOME/.claude/session-env/solidtime-sync.sh" ] || return 0
+    if [ -f "$HOME/.claude/session-env/solidtime.conf" ] || [ -n "${SOLIDTIME_URL:-}" ]; then
+      ( bash "$HOME/.claude/session-env/solidtime-sync.sh" --session "$SESSION_ID" >/dev/null 2>&1 & ) 2>/dev/null || true
+    fi
+  }
+
   NOW="$(date +%s)"
   if [ -f "$DB_LIB" ] && st_has_sqlite; then
     st_db_init 2>/dev/null || true
     if st_upsert_session "$SESSION_ID" "$PROJECT_ROOT" "$CWD" "$BRANCH" "$ISSUE_KEY" \
          "$START_TS" "$END_TS" "$DURATION" "$ACTIVE_SECONDS" "$IDLE_SECONDS" "$REASON" "$NOW"; then
-      st_import_events "$SESSION_ID" "$EVENTS_FILE" 2>/dev/null || true
+      kick_solidtime_sync
       exit 0
     fi
   fi
@@ -108,6 +118,8 @@ set -uo pipefail
     # macOS: no flock. JSONL appends via `>>` on local FS are atomic for small lines.
     printf '%s\n' "$LINE" >> "$HISTORY_FILE"
   fi
+
+  kick_solidtime_sync
 } || exit 0
 
 exit 0
