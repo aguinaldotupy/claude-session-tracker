@@ -24,7 +24,18 @@ _sq_int() { case "$1" in ''|*[!0-9]*) echo 0 ;; *) echo "$1" ;; esac; }
 sq_status() {
   local sid="" now sdir start_ts live_elapsed live_active issue src
   while [ $# -gt 0 ]; do case "$1" in --session) sid="$2"; shift 2 ;; *) shift ;; esac; done
-  [ -z "$sid" ] && sid="${SESSION_TRACKER_SESSION_ID:-${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}}"
+  [ -z "$sid" ] && sid="${SESSION_TRACKER_SESSION_ID:-${ANTIGRAVITY_CONVERSATION_ID:-${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}}}"
+  if [ -z "$sid" ] && [ -f "$_SQ_ENV/current-session" ]; then
+    local cand; cand="$(head -n1 "$_SQ_ENV/current-session" 2>/dev/null | tr -d '[:space:]')"
+    if [ -n "$cand" ]; then
+      local ended=false
+      if [ "$(_sq_source)" = sqlite ] && st_has_sqlite; then
+        local count; count="$(sqlite3 "$(st_db_path)" "SELECT COUNT(*) FROM sessions WHERE session_id='$(st_sql_escape "$cand")';" 2>/dev/null)"
+        [ "${count:-0}" -gt 0 ] && ended=true
+      fi
+      [ "$ended" = false ] && sid="$cand"
+    fi
+  fi
   now="$(date +%s)"
   src="$(_sq_source)"
   sdir="$_SQ_ENV/$sid"

@@ -1,0 +1,11 @@
+{
+  "description": "Background session reaper and sync for session-tracker",
+  "builtin": "schedule",
+  "args": [
+    "*/5 * * * *",
+    "/bin/bash",
+    "-c",
+    "st_home=\"${SESSION_TRACKER_HOME:-$HOME/.session-tracker}\"; [ -f \"$st_home/reap-sessions.sh\" ] && bash \"$st_home/reap-sessions.sh\"; [ -f \"$st_home/solidtime-sync.sh\" ] && bash \"$st_home/solidtime-sync.sh\""
+  ],
+  "restart_policy": "always"
+}
