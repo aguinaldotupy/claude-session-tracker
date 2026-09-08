@@ -330,6 +330,13 @@ git -C ~/plugins/session-tracker pull                             # Update
 - **Native Windows** is not supported directly — use WSL or Git Bash, since
   the hooks and `session-query` are POSIX shell/`awk`.
 
+## Contributing
+
+Contributions, bug reports, and feature requests are welcome! Please check out:
+- [Contributing Guide](CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Security Policy](SECURITY.md)
+
 ## License
 
-MIT
+[MIT](LICENSE) © 2026 Aguinaldo Tupy
