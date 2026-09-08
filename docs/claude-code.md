@@ -83,17 +83,19 @@ Display your active session timer directly in the Claude Code status line:
 2. Append the snippet from [`statusline-snippet.sh`](../statusline-snippet.sh):
 
 ```bash
-# If cloned locally:
-REPO=~/plugins/session-tracker # or ~/path/to/claude-session-tracker
+# Locate snippet from your cloned repo or installed marketplace plugin directory:
+SNIPPET="${REPO:-$HOME/plugins/session-tracker}/statusline-snippet.sh"
 
-if [ -f "$REPO/statusline-snippet.sh" ]; then
-  cat "$REPO/statusline-snippet.sh" >> ~/.claude/statusline-command.sh
-else
-  # For Marketplace installs or direct download:
-  curl -sSL https://raw.githubusercontent.com/aguinaldotupy/claude-session-tracker/main/statusline-snippet.sh >> ~/.claude/statusline-command.sh
+if [ ! -f "$SNIPPET" ]; then
+  SNIPPET=$(find ~/.claude/plugins -name "statusline-snippet.sh" 2>/dev/null | head -n 1)
 fi
 
-chmod +x ~/.claude/statusline-command.sh
+if [ -n "$SNIPPET" ] && [ -f "$SNIPPET" ]; then
+  cat "$SNIPPET" >> ~/.claude/statusline-command.sh
+  chmod +x ~/.claude/statusline-command.sh
+else
+  echo "Statusline snippet not found. Ensure the plugin is installed or repository is cloned."
+fi
 ```
 
 Ensure your `~/.claude/settings.json` has statusline enabled:

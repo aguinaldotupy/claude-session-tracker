@@ -56,6 +56,7 @@ If you prefer enabling it only for a specific repository:
 REPO=~/plugins/session-tracker
 cd /path/to/your/project
 
+# Antigravity discovers workspace plugins in .gemini/plugins/ (or .agents/plugins/):
 mkdir -p .gemini/plugins
 ln -sfn "$REPO/agy" .gemini/plugins/session-tracker
 ```
@@ -84,12 +85,12 @@ This ensures that any session terminated abruptly (such as closing the IDE or te
 
 Antigravity invokes lifecycle hooks registered in [`agy/hooks.json`](../agy/hooks.json):
 
-| AGY Event | Hook Handler | Internal Action |
-|---|---|---|
-| `PreInvocation` | `hook-adapter.sh pre-invocation` | Sets up session dir, updates `current-session`, logs prompt `P` |
-| `PreToolUse` | `hook-adapter.sh pre-tool-use` | Logs tool start heartbeat `T <tool>` |
-| `PostToolUse` | `hook-adapter.sh post-tool-use` | Logs tool completion `D <tool>` (or failure `DF <tool>`) |
-| `Stop` | `hook-adapter.sh stop` | Logs turn stop `S`, checkpoints active duration to SQLite, clears `current-session` |
+| AGY Event | Hook Handler | Output Contract | Internal Action |
+|---|---|---|---|
+| `PreInvocation` | `hook-adapter.sh pre-invocation` | `{}` (or optional `injectSteps`) | Seeds session dir, updates `current-session`, logs prompt `P` |
+| `PreToolUse` | `hook-adapter.sh pre-tool-use` | `{"decision": "allow"}` | Logs tool start heartbeat `T <tool>` |
+| `PostToolUse` | `hook-adapter.sh post-tool-use` | `{}` | Logs tool completion `D <tool>` (or failure `DF <tool>`) |
+| `Stop` | `hook-adapter.sh stop` | `{"decision": "allow"}` (or `"continue"`) | Logs stop `S`, checkpoints duration to SQLite, clears `current-session` |
 
 ---
 

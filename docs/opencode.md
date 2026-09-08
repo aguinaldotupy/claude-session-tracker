@@ -70,10 +70,10 @@ OpenCode uses a JavaScript plugin architecture. The adapter (`opencode/plugin.js
 | **Event Bus** | `event: session.idle` | `hooks/stop.sh` | Turn finished, writes `S` |
 | **Event Bus** | `event: session.error` | `hooks/stop-failure.sh` | Turn error, writes `SF` |
 | **Plugin Hook** | `shell.env` | Injects environment | Injects `SESSION_TRACKER_SESSION_ID` and `CLAUDE_SESSION_ID` into tool calls |
-| **Lifecycle** | `dispose` | `hooks/session-end.sh` | Clean exit checkpoint: computes active time and writes to SQLite |
+| **Cleanup Hook** | Plugin cleanup (`dispose`) | `hooks/session-end.sh` | Clean exit checkpoint: computes active time and writes to SQLite |
 
 > [!NOTE]
-> OpenCode's `dispose` lifecycle callback executes during a clean shutdown. If OpenCode is forcefully killed (`kill -9`, power loss, or terminal crash), the session is never lost: the background sweeper (`reap-sessions.sh`) automatically recovers and finalizes the session from its last recorded event during the next session start.
+> The adapter exports an unload cleanup function (`dispose`) to checkpoint active sessions during clean exit. If OpenCode is forcefully terminated (`kill -9`, power loss, or terminal crash), the session is never lost: the background sweeper (`reap-sessions.sh`) automatically recovers and finalizes the session from its last recorded event during the next session start.
 
 ---
 
