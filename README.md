@@ -91,6 +91,30 @@ Two differences worth knowing:
   `dispose` hook, which runs on a clean exit. A hard kill is covered by the
   background sweep described under [Where your data lives](#where-your-data-lives).
 
+### Option 5: Antigravity (agy)
+
+`session-tracker` can be installed as an Antigravity plugin, sharing the exact same store, history, and Solidtime sync.
+
+```bash
+REPO=~/path/to/session-tracker      # your clone
+AGY_CONFIG=~/.gemini/config
+
+mkdir -p "$AGY_CONFIG/plugins"
+ln -sfn "$REPO/agy" "$AGY_CONFIG/plugins/session-tracker"
+```
+
+To enable the background session reaper & Solidtime sync sidecar in Antigravity, add to `~/.gemini/config/config.json`:
+
+```json
+{
+  "sidecars": {
+    "session-tracker/session-reaper": {
+      "enabled": true
+    }
+  }
+}
+```
+
 ### Verify Installation
 
 Inside a Claude Code session:

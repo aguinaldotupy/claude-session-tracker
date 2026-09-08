@@ -1,0 +1,9 @@
+{
+  "name": "session-tracker",
+  "description": "Track active working time, session history, and worklogs in Antigravity",
+  "version": "4.1.0",
+  "author": {
+    "name": "Aguinaldo Tupy"
+  },
+  "license": "MIT"
+}
