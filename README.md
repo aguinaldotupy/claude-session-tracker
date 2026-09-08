@@ -4,66 +4,50 @@
 
 # session-tracker
 
-Track Claude Code session duration with automatic timestamps.
+Track active coding time, session duration, and worklogs across **Claude Code**, **OpenCode**, and **Google Antigravity (AGY)** with automatic timestamps, SQLite persistence, and optional Solidtime sync.
+
+## Documentation Guides
+
+- 📘 **[Overview & Comparison](docs/README.md)**: Full architecture, multi-harness comparison matrix, and shared store reference.
+- 🟣 **[Claude Code Setup Guide](docs/claude-code.md)**: Marketplace install, manual configuration, status line snippet, commands, and skills.
+- 🟢 **[OpenCode Setup Guide](docs/opencode.md)**: JS plugin adapter, symlink setup, event mappings, and commands.
+- 🔵 **[Antigravity (AGY) Setup Guide](docs/antigravity.md)**: Native AGY plugin manifest, lifecycle hooks, agent rules, and background sidecar.
 
 ## Features
 
-- **SessionStart hook** - saves a start timestamp under `~/.session-tracker/<session_id>/` and reports its path as `CLAUDE_SESSION_FILE` in hook output
-- **SessionEnd hook** - appends completed sessions to a JSONL history log for worklog reports
-- **Active (working) time** - active time is computed additively from `events.log`: each prompt→stop bracket counts in full, plus up to `SESSION_IDLE_THRESHOLD_SECONDS` (default 120s) of reading after each turn. A session left open while you work elsewhere stops accruing, so concurrent sessions on the same project stay honest. `PreToolUse`/`PostToolUse` heartbeats record tool activity for a forensic timeline.
+- **Lifecycle hooks** - automatically tracks session start timestamps under `~/.session-tracker/<session_id>/`
+- **History store** - records completed sessions to a local SQLite database (`~/.session-tracker/history.db`) or JSONL fallback for worklogs
+- **Active (working) time** - computed additively from `events.log`: each prompt→stop bracket counts in full, plus up to `SESSION_IDLE_THRESHOLD_SECONDS` (default 120s) of reading grace after each turn. A session left open while you work elsewhere stops accruing, so concurrent sessions stay honest. `PreToolUse`/`PostToolUse` heartbeats record forensic activity.
 - **Persistent session files** - session data survives session end so you can track hours later
-- **`/session-tracker:session-status` skill** - check elapsed time, plus today's accumulated total
-- **`/session-tracker:session-history` command + skill** - review past sessions filtered by date or project
-- **`/session-tracker:reset-session` command** - reset the timer to zero
-- **Auto-reset on `/clear`** - clearing the session automatically restarts the timer
-- **Status line snippet** - optional integration for live timer display
+- **Skills & Slash Commands** - check elapsed time, today's accumulated total, and query past sessions
+- **Timer Reset** - manually reset the session timer to zero, or auto-reset on `/clear`
+- **TUI Status Line** - optional status line snippet for live timer display in Claude Code
+- **Solidtime Sync** - optional local-first sync to Solidtime for unified team/personal dashboards
 
 ## Installation
 
-### Option 1: From Marketplace (recommended)
+`session-tracker` supports three coding environments out-of-the-box, sharing the same store (`~/.session-tracker/`) and Solidtime configuration:
+
+| Assistant | Quick Setup | Detailed Tutorial |
+|---|---|---|
+| **Claude Code** | `claude plugin install session-tracker@aguinaldotupy --scope user` | [Claude Code Guide](docs/claude-code.md) |
+| **OpenCode** | Symlink `opencode/plugin.js` to `~/.config/opencode/plugins/` | [OpenCode Guide](docs/opencode.md) |
+| **Antigravity (AGY)** | Symlink `agy/` to `~/.gemini/config/plugins/session-tracker` | [Antigravity Guide](docs/antigravity.md) |
+
+---
+
+### Claude Code
 
 ```bash
-# Add as a standalone marketplace plugin
+# 1. Add marketplace catalog
 claude plugin marketplace add aguinaldotupy/claude-session-tracker
 
-# Install the plugin
+# 2. Install globally
 claude plugin install session-tracker@aguinaldotupy --scope user
-
-# Restart Claude Code to activate hooks
 ```
+*For local dev, manual clone, or status line integration, see the [Claude Code Guide](docs/claude-code.md).*
 
-### Option 2: Local Install (development)
-
-```bash
-git clone https://github.com/aguinaldotupy/claude-session-tracker.git
-claude --plugin-dir ./claude-session-tracker
-```
-
-### Option 3: Manual Install
-
-```bash
-# Clone into the plugins directory
-git clone https://github.com/aguinaldotupy/claude-session-tracker.git \
-  ~/.claude/plugins/marketplaces/claude-session-tracker
-```
-
-Then enable in `~/.claude/settings.json`:
-
-```json
-{
-  "enabledPlugins": {
-    "session-tracker@claude-session-tracker": true
-  }
-}
-```
-
-### Option 4: opencode
-
-The tracking, the store, and the Solidtime sync are plain shell — nothing in
-them is specific to Claude Code. `opencode/plugin.js` maps opencode's JS hooks
-onto the same shell hooks, so both harnesses write to the same
-`~/.session-tracker/` and your worklog covers your whole day regardless of which
-editor it happened in.
+### OpenCode
 
 ```bash
 REPO=~/path/to/session-tracker      # your clone
@@ -76,24 +60,9 @@ for skill in "$REPO"/skills/*/; do
   ln -sfn "$skill" "$OC/skills/$(basename "$skill")"
 done
 ```
+*For hook mappings and usage, see the [OpenCode Guide](docs/opencode.md).*
 
-The skills and commands are shared verbatim — opencode reads the same
-body-as-prompt markdown, and the plugin publishes the session id into every
-shell call so they locate the live session exactly as they do in Claude Code.
-Commands are namespaced by directory there, so `/session-tracker:sync` in Claude
-Code is `/session-tracker/sync` in opencode.
-
-Two differences worth knowing:
-
-- **No status line.** opencode's TUI has no custom status line API, so the live
-  timer is only available through `/session-tracker/session-status`.
-- **Shutdown vs. crash.** opencode has no session-end event; the plugin uses its
-  `dispose` hook, which runs on a clean exit. A hard kill is covered by the
-  background sweep described under [Where your data lives](#where-your-data-lives).
-
-### Option 5: Antigravity (agy)
-
-`session-tracker` can be installed as an Antigravity plugin, sharing the exact same store, history, and Solidtime sync.
+### Antigravity (AGY)
 
 ```bash
 REPO=~/path/to/session-tracker      # your clone
@@ -114,16 +83,13 @@ To enable the background session reaper & Solidtime sync sidecar in Antigravity,
   }
 }
 ```
+*For agent rules, skills, and sidecar configuration, see the [Antigravity Guide](docs/antigravity.md).*
 
 ### Verify Installation
 
-Inside a Claude Code session:
-
-```
-/plugin
-```
-
-Navigate to the **Installed** tab - `session-tracker` should appear.
+- **Claude Code**: Run `/plugin` and navigate to the **Installed** tab — `session-tracker` should appear active.
+- **OpenCode**: Run `/session-tracker/session-status` or check `ls ~/.config/opencode/plugins/session-tracker.js`.
+- **Antigravity (AGY)**: Ask your agent *"quanto tempo de sessão?"* or verify `~/.session-tracker/current-session` during an active turn.
 
 ## Usage
 
@@ -246,23 +212,24 @@ The time shown is **active** (working) time — the same number `session-status`
 
 ## How It Works
 
-1. On session start, the `SessionStart` hook reads `session_id` from its stdin JSON and writes the start timestamp to `~/.session-tracker/<session_id>/session-tracker`, then prints that path back as `CLAUDE_SESSION_FILE` in its hook output (no `CLAUDE_ENV_FILE` indirection)
-2. The session ID is stable across context compaction, so the timestamp survives compact and resume without extra hooks
-3. `/session-tracker:session-status` and the statusline locate the file by `session_id` under `~/.session-tracker/<session_id>/` and read it from that per-session directory
-4. Session files persist after session end - no data is lost when closing Claude Code
-5. Using `/clear` or starting a new session creates a fresh timestamp
-6. `UserPromptSubmit`/`Stop` and `PreToolUse`/`PostToolUse` hooks append `P`/`S` and `T`/`D <tool>` lines to `events.log`; active time is computed additively (prompt→stop brackets plus a bounded reading grace) by `hooks/lib/active-time.awk`, which `SessionStart` deploys to `~/.session-tracker/active-time.awk` for the statusline and skills to share
-7. If a session dies without a `SessionEnd` — a crash, a `kill`, power loss — the next session start sweeps it up in the background and records it from its own last event, so the time still lands in your history and your Solidtime sync
+1. On session start (or turn start in Antigravity), lifecycle hooks read the session ID and write the start timestamp to `~/.session-tracker/<session_id>/session-tracker`.
+2. The session ID is stable across context compaction and resumes without extra hooks.
+3. `/session-tracker:session-status`, `/session-tracker/session-status`, or agent skills locate the active session under `~/.session-tracker/` via environment variables (`CLAUDE_SESSION_ID`, `SESSION_TRACKER_SESSION_ID`, `ANTIGRAVITY_CONVERSATION_ID`) or the `~/.session-tracker/current-session` pointer.
+4. Session files persist after session end — no data is lost when closing the editor.
+5. Using `/clear` or starting a new session creates a fresh timestamp and truncates events.
+6. `UserPromptSubmit`/`Stop` and `PreToolUse`/`PostToolUse` hooks append `P`/`S` and `T`/`D <tool>` lines to `events.log`; active time is computed additively (prompt→stop brackets plus a bounded reading grace) by `hooks/lib/active-time.awk`, which `SessionStart` deploys to `~/.session-tracker/active-time.awk`.
+7. If a session dies without a clean shutdown — a crash, a `kill`, power loss — the background sweeper (`reap-sessions.sh`) on the next session start (or Antigravity's scheduled sidecar) sweeps it up and records it from its own last event, so the time still lands in your history and your Solidtime sync.
 
 ## Where your data lives
 
 Everything the plugin writes lives in one directory:
 
-```
+```text
 ~/.session-tracker/
 ├── history.db                  # the session store (SQLite)
 ├── config.yml                  # plugin config (sync credentials; chmod 600)
-├── solidtime-sync.log
+├── current-session             # active session pointer (during live turn)
+├── solidtime-sync.log          # sync activity log
 ├── <session_id>/               # one directory per session
 │   ├── session-tracker         # start timestamp
 │   ├── events.log              # prompt/stop/tool events
@@ -303,9 +270,9 @@ the same history.
 
 ### Sessions that never got a clean shutdown
 
-`SessionEnd` is an optimization, not a guarantee — Claude Code can be killed and
+Clean shutdown hooks are an optimization, not a guarantee — editors can be killed and
 machines lose power. Everything the accounting needs is already on disk in
-`events.log`, so a background sweep at session start closes any session that has
+`events.log`, so a background sweep closes any session that has
 been silent for more than 4 hours, using its **last recorded event** as the end
 time (never the current time — that is the last moment we know you were
 working). Sessions with no events at all are left alone rather than given an
@@ -319,27 +286,36 @@ Two knobs, both optional:
 | `SESSION_TRACKER_REAP_WINDOW_DAYS` | `7` | How far back the sweep looks |
 
 If a swept session turns out to still be alive, it corrects itself: the real
-`SessionEnd` overwrites the swept row.
+shutdown event overwrites the swept row.
 
 ## Managing the Plugin
 
+### Claude Code
 ```bash
-# Disable without uninstalling
-claude plugin disable session-tracker@aguinaldotupy --scope user
+claude plugin disable session-tracker@aguinaldotupy --scope user   # Disable
+claude plugin enable session-tracker@aguinaldotupy --scope user    # Re-enable
+claude plugin update session-tracker@aguinaldotupy --scope user    # Update
+claude plugin uninstall session-tracker@aguinaldotupy --scope user # Uninstall
+```
 
-# Re-enable
-claude plugin enable session-tracker@aguinaldotupy --scope user
+### OpenCode
+```bash
+rm ~/.config/opencode/plugins/session-tracker.js                  # Disable / Uninstall
+git -C ~/plugins/session-tracker pull                             # Update
+```
 
-# Uninstall
-claude plugin uninstall session-tracker@aguinaldotupy --scope user
-
-# Update to latest version
-claude plugin update session-tracker@aguinaldotupy --scope user
+### Antigravity (AGY)
+```bash
+rm ~/.gemini/config/plugins/session-tracker                       # Disable / Uninstall
+git -C ~/plugins/session-tracker pull                             # Update
 ```
 
 ## Requirements
 
-- Claude Code >= 2.1.x
+- **Supported Environments**:
+  - **Claude Code** >= 2.1.x
+  - **OpenCode**
+  - **Google Antigravity (AGY)**
 - **`bash`** and **`jq`** — required. All read queries (status, history,
   timeline, worklog) run through the `session-query` helper, which needs both.
 - **`sqlite3`** — recommended, not required. The session history is stored in
