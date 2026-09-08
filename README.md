@@ -4,7 +4,14 @@
 
 # session-tracker
 
-Track Claude Code session duration with automatic timestamps.
+Track active coding time, session duration, and worklogs across **Claude Code**, **OpenCode**, and **Google Antigravity (AGY)** with automatic timestamps, SQLite persistence, and optional Solidtime sync.
+
+## Documentation Guides
+
+- 📘 **[Overview & Comparison](docs/README.md)**: Full architecture, multi-harness comparison matrix, and shared store reference.
+- 🟣 **[Claude Code Setup Guide](docs/claude-code.md)**: Marketplace install, manual configuration, status line snippet, commands, and skills.
+- 🟢 **[OpenCode Setup Guide](docs/opencode.md)**: JS plugin adapter, symlink setup, event mappings, and commands.
+- 🔵 **[Antigravity (AGY) Setup Guide](docs/antigravity.md)**: Native AGY plugin manifest, lifecycle hooks, agent rules, and background sidecar.
 
 ## Features
 
@@ -20,50 +27,28 @@ Track Claude Code session duration with automatic timestamps.
 
 ## Installation
 
-### Option 1: From Marketplace (recommended)
+`session-tracker` supports three coding environments out-of-the-box, sharing the same store (`~/.session-tracker/`) and Solidtime configuration:
+
+| Assistant | Quick Setup | Detailed Tutorial |
+|---|---|---|
+| **Claude Code** | `claude plugin install session-tracker@aguinaldotupy --scope user` | [Claude Code Guide](docs/claude-code.md) |
+| **OpenCode** | Symlink `opencode/plugin.js` to `~/.config/opencode/plugins/` | [OpenCode Guide](docs/opencode.md) |
+| **Antigravity (AGY)** | Symlink `agy/` to `~/.gemini/config/plugins/session-tracker` | [Antigravity Guide](docs/antigravity.md) |
+
+---
+
+### Claude Code
 
 ```bash
-# Add as a standalone marketplace plugin
+# 1. Add marketplace catalog
 claude plugin marketplace add aguinaldotupy/claude-session-tracker
 
-# Install the plugin
+# 2. Install globally
 claude plugin install session-tracker@aguinaldotupy --scope user
-
-# Restart Claude Code to activate hooks
 ```
+*For local dev, manual clone, or status line integration, see the [Claude Code Guide](docs/claude-code.md).*
 
-### Option 2: Local Install (development)
-
-```bash
-git clone https://github.com/aguinaldotupy/claude-session-tracker.git
-claude --plugin-dir ./claude-session-tracker
-```
-
-### Option 3: Manual Install
-
-```bash
-# Clone into the plugins directory
-git clone https://github.com/aguinaldotupy/claude-session-tracker.git \
-  ~/.claude/plugins/marketplaces/claude-session-tracker
-```
-
-Then enable in `~/.claude/settings.json`:
-
-```json
-{
-  "enabledPlugins": {
-    "session-tracker@claude-session-tracker": true
-  }
-}
-```
-
-### Option 4: opencode
-
-The tracking, the store, and the Solidtime sync are plain shell — nothing in
-them is specific to Claude Code. `opencode/plugin.js` maps opencode's JS hooks
-onto the same shell hooks, so both harnesses write to the same
-`~/.session-tracker/` and your worklog covers your whole day regardless of which
-editor it happened in.
+### OpenCode
 
 ```bash
 REPO=~/path/to/session-tracker      # your clone
@@ -76,24 +61,9 @@ for skill in "$REPO"/skills/*/; do
   ln -sfn "$skill" "$OC/skills/$(basename "$skill")"
 done
 ```
+*For hook mappings and usage, see the [OpenCode Guide](docs/opencode.md).*
 
-The skills and commands are shared verbatim — opencode reads the same
-body-as-prompt markdown, and the plugin publishes the session id into every
-shell call so they locate the live session exactly as they do in Claude Code.
-Commands are namespaced by directory there, so `/session-tracker:sync` in Claude
-Code is `/session-tracker/sync` in opencode.
-
-Two differences worth knowing:
-
-- **No status line.** opencode's TUI has no custom status line API, so the live
-  timer is only available through `/session-tracker/session-status`.
-- **Shutdown vs. crash.** opencode has no session-end event; the plugin uses its
-  `dispose` hook, which runs on a clean exit. A hard kill is covered by the
-  background sweep described under [Where your data lives](#where-your-data-lives).
-
-### Option 5: Antigravity (agy)
-
-`session-tracker` can be installed as an Antigravity plugin, sharing the exact same store, history, and Solidtime sync.
+### Antigravity (AGY)
 
 ```bash
 REPO=~/path/to/session-tracker      # your clone
@@ -114,6 +84,7 @@ To enable the background session reaper & Solidtime sync sidecar in Antigravity,
   }
 }
 ```
+*For agent rules, skills, and sidecar configuration, see the [Antigravity Guide](docs/antigravity.md).*
 
 ### Verify Installation
 
