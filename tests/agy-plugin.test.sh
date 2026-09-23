@@ -159,5 +159,16 @@ tag_out=$(cd "$PROJ" && ARGUMENTS="LIN-42" bash -c "$(reset_snippet "$ROOT/comma
 assert_eq "tag writes issue-tag in AGY" "LIN-42" "$(cat "$SE/$RESET_CID/issue-tag" 2>/dev/null)"
 assert_eq "tag reports success" "1" "$(printf '%s' "$tag_out" | grep -c "Tagged current session as LIN-42")"
 
+# 11. `agy plugin install` stages a copy with symlinks dereferenced, away from
+# the repo. The copy must still find the hooks (via agy/hooks), from any cwd.
+cp -RL "$ROOT/agy" "$TMP/agy-installed"
+INST_CID="installed-conv-1"
+(cd "$TMP" && printf '{"conversationId":"%s","workspacePaths":["%s"]}' "$INST_CID" "$PROJ" \
+  | bash "$TMP/agy-installed/hook-adapter.sh" pre-invocation >/dev/null)
+assert_eq "installed copy (no repo alongside) still tracks" "P" \
+  "$(awk '{print $1}' "$SE/$INST_CID/events.log" 2>/dev/null)"
+assert_eq "installed copy ships the skills as files" "yes" \
+  "$([ -f "$TMP/agy-installed/skills/reset-session/SKILL.md" ] && echo yes || echo no)"
+
 finish
 

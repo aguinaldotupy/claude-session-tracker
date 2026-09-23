@@ -6,27 +6,14 @@ set -uo pipefail
 
 EVENT="${1:-}"
 
+# agy/hooks is a symlink to ../hooks, so the plugin dir is the root both when
+# it is symlinked from the repo and when `agy plugin install` copies it (the
+# copy dereferences symlinks, so the hooks travel with it).
 resolve_root() {
-  if [ -n "${SESSION_TRACKER_PLUGIN_ROOT:-}" ] && [ -f "${SESSION_TRACKER_PLUGIN_ROOT}/hooks/session-start.sh" ]; then
-    printf '%s' "$SESSION_TRACKER_PLUGIN_ROOT"
-    return 0
-  fi
-  local script_dir
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
-  if [ -f "$script_dir/../hooks/session-start.sh" ]; then
-    (cd "$script_dir/.." && pwd)
-    return 0
-  fi
-  local phys_dir
-  phys_dir="$(cd "$script_dir" 2>/dev/null && pwd -P)"
-  if [ -f "$phys_dir/../hooks/session-start.sh" ]; then
-    (cd "$phys_dir/.." && pwd -P)
-    return 0
-  fi
-  if [ -f "./hooks/session-start.sh" ]; then
-    pwd
-    return 0
-  fi
+  local d
+  for d in "${SESSION_TRACKER_PLUGIN_ROOT:-}" "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"; do
+    [ -n "$d" ] && [ -f "$d/hooks/session-start.sh" ] && { printf '%s' "$d"; return 0; }
+  done
   return 1
 }
 

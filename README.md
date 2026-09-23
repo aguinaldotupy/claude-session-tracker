@@ -32,7 +32,7 @@ Track active coding time, session duration, and worklogs across **Claude Code**,
 |---|---|---|
 | **Claude Code** | `claude plugin install session-tracker@aguinaldotupy --scope user` | [Claude Code Guide](docs/claude-code.md) |
 | **OpenCode** | Symlink `opencode/plugin.js` to `~/.config/opencode/plugins/` | [OpenCode Guide](docs/opencode.md) |
-| **Antigravity (AGY)** | Symlink `agy/` to `~/.gemini/config/plugins/session-tracker` | [Antigravity Guide](docs/antigravity.md) |
+| **Antigravity (AGY)** | `agy plugin install ~/plugins/session-tracker/agy` | [Antigravity Guide](docs/antigravity.md) |
 
 ---
 

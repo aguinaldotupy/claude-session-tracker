@@ -38,8 +38,17 @@ git clone https://github.com/aguinaldotupy/claude-session-tracker.git ~/plugins/
 
 ### 2. Install the Plugin
 
-#### Option A: Global Installation (All Workspaces)
-Link the plugin to Antigravity's global configuration directory:
+#### Option A: `agy plugin install` (Recommended)
+
+```bash
+agy plugin install ~/plugins/session-tracker/agy
+```
+
+Antigravity stages a **copy** of the plugin into `~/.gemini/config/plugins/session-tracker/`. The copy is self-contained: `agy/hooks` and `agy/skills/*` are symlinks into the repo, and the installer copies what they point to, so the shell hooks and skills travel with it. Check it with `agy plugin list`.
+
+#### Option B: Symlink (Follows the Repo)
+
+Link the plugin instead of copying it, so a `git pull` is all an update takes:
 
 ```bash
 REPO=~/plugins/session-tracker
@@ -49,17 +58,28 @@ mkdir -p "$AGY_CONFIG/plugins"
 ln -sfn "$REPO/agy" "$AGY_CONFIG/plugins/session-tracker"
 ```
 
-#### Option B: Workspace Installation (Specific Project)
+#### Option C: Workspace Installation (Specific Project)
 If you prefer enabling it only for a specific repository:
 
 ```bash
 REPO=~/plugins/session-tracker
 cd /path/to/your/project
 
-# Antigravity discovers workspace plugins in .gemini/plugins/ (or .agents/plugins/):
-mkdir -p .gemini/plugins
-ln -sfn "$REPO/agy" .gemini/plugins/session-tracker
+# Antigravity discovers workspace plugins in .agents/plugins/:
+mkdir -p .agents/plugins
+ln -sfn "$REPO/agy" .agents/plugins/session-tracker
 ```
+
+---
+
+## Updating
+
+```bash
+cd ~/plugins/session-tracker && git pull
+agy plugin install ~/plugins/session-tracker/agy   # Option A only: refreshes the staged copy
+```
+
+A symlinked install (Options B and C) needs only the `git pull`. Either way, the shared libraries in `~/.session-tracker/` are refreshed the next time a **new** conversation starts (in Antigravity or any other supported editor); conversations already open keep using the previous copy until then.
 
 ---
 
