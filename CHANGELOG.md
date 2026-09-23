@@ -5,6 +5,16 @@ All notable changes to this plugin are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.1] - 2026-09-23
+
+### Fixed
+- **Antigravity: installing with `agy plugin install` now works.** The installer
+  copies the plugin away from the repository, and the copy could not find the
+  shell hooks it drives — every hook quietly did nothing and no time was
+  recorded. The hooks now travel with the installed copy. `agy plugin install`
+  is the recommended method; to update, `git pull` and run it again. Symlinked
+  installs keep working and need only the `git pull`.
+
 ## [4.1.0] - 2026-09-23
 
 The plugin now runs under Google Antigravity too,
@@ -310,6 +320,7 @@ have scripts pointing at the old paths.
 - Initial release: `SessionStart` hook + `session-status` skill + optional
   statusline snippet for live elapsed time.
 
+[4.1.1]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v4.1.0...v4.1.1
 [4.1.0]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v4.0.0...v4.1.0
 [4.0.0]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v3.2.0...v4.0.0
 [3.2.0]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v3.1.1...v3.2.0
