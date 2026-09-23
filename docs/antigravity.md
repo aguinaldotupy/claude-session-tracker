@@ -81,16 +81,39 @@ This ensures that any session terminated abruptly (such as closing the IDE or te
 
 ---
 
+## Auto-approving Query Skills (Optional Permissions)
+
+To allow Antigravity to run `session-query.sh` (used by the `session-status`, `session-history`, and `sync` skills) without asking for interactive confirmation each time, configure a command grant in `~/.gemini/config/config.json`:
+
+```json
+{
+  "userSettings": {
+    "globalPermissionGrants": {
+      "allow": [
+        "command(bash /Users/<your-username>/.session-tracker/session-query.sh)"
+      ]
+    }
+  }
+}
+```
+
+> [!NOTE]
+> - Use `command(...)` syntax. Do **not** use `unsandboxed(...)` (which is Claude Code syntax and ignored by Antigravity).
+> - Do not include dynamic flags like `--session <uuid>` in permission rules. `session-query.sh` automatically detects the live Antigravity conversation via environment variables and the per-conversation pointers in `~/.session-tracker/current-sessions/`.
+
+
+---
+
 ## How Hooks Work in Antigravity
 
 Antigravity invokes lifecycle hooks registered in [`agy/hooks.json`](../agy/hooks.json):
 
 | AGY Event | Hook Handler | Output Contract | Internal Action |
 |---|---|---|---|
-| `PreInvocation` | `hook-adapter.sh pre-invocation` | `{}` (or optional `injectSteps`) | Seeds session dir, updates `current-session`, logs prompt `P` |
+| `PreInvocation` | `hook-adapter.sh pre-invocation` | `{}` (or optional `injectSteps`) | Seeds session dir, writes `current-sessions/<conversation-id>`, logs prompt `P` |
 | `PreToolUse` | `hook-adapter.sh pre-tool-use` | `{"decision": "allow"}` | Logs tool start heartbeat `T <tool>` |
 | `PostToolUse` | `hook-adapter.sh post-tool-use` | `{}` | Logs tool completion `D <tool>` (or failure `DF <tool>`) |
-| `Stop` | `hook-adapter.sh stop` | `{"decision": "allow"}` (or `"continue"`) | Logs stop `S`, checkpoints duration to SQLite, clears `current-session` |
+| `Stop` | `hook-adapter.sh stop` | `{"decision": "allow"}` (or `"continue"`) | Logs stop `S`, checkpoints duration to SQLite, removes `current-sessions/<conversation-id>` |
 
 ---
 
@@ -136,7 +159,7 @@ The agent invokes the `sync` skill to check connectivity or push unsynced time e
 ## Verification & Diagnostics
 
 1. **Verify Plugin Registration:**
-   In Antigravity, run any prompt. During the turn, verify that `~/.session-tracker/current-session` points to your conversation ID.
+   In Antigravity, run any prompt. During the turn, verify that `~/.session-tracker/current-sessions/<your-conversation-id>` exists.
 2. **Inspect the SQLite Store:**
    ```bash
    sqlite3 ~/.session-tracker/history.db "SELECT session_id, duration_seconds, active_seconds, project_name FROM sessions ORDER BY start_ts DESC LIMIT 5;"

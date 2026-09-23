@@ -89,7 +89,7 @@ To enable the background session reaper & Solidtime sync sidecar in Antigravity,
 
 - **Claude Code**: Run `/plugin` and navigate to the **Installed** tab — `session-tracker` should appear active.
 - **OpenCode**: Run `/session-tracker/session-status` or check `ls ~/.config/opencode/plugins/session-tracker.js`.
-- **Antigravity (AGY)**: Ask your agent *"quanto tempo de sessão?"* or verify `~/.session-tracker/current-session` during an active turn.
+- **Antigravity (AGY)**: Ask your agent *"quanto tempo de sessão?"* or verify `~/.session-tracker/current-sessions/<conversation-id>` exists during an active turn.
 
 ## Usage
 
@@ -214,7 +214,7 @@ The time shown is **active** (working) time — the same number `session-status`
 
 1. On session start (or turn start in Antigravity), lifecycle hooks read the session ID and write the start timestamp to `~/.session-tracker/<session_id>/session-tracker`.
 2. The session ID is stable across context compaction and resumes without extra hooks.
-3. `/session-tracker:session-status`, `/session-tracker/session-status`, or agent skills locate the active session under `~/.session-tracker/` via environment variables (`CLAUDE_SESSION_ID`, `SESSION_TRACKER_SESSION_ID`, `ANTIGRAVITY_CONVERSATION_ID`) or the `~/.session-tracker/current-session` pointer.
+3. `/session-tracker:session-status`, `/session-tracker/session-status`, or agent skills locate the active session under `~/.session-tracker/` via environment variables (`CLAUDE_SESSION_ID`, `SESSION_TRACKER_SESSION_ID`, `ANTIGRAVITY_CONVERSATION_ID`) or the per-conversation pointers in `~/.session-tracker/current-sessions/` (picked by the working directory when several conversations are live).
 4. Session files persist after session end — no data is lost when closing the editor.
 5. Using `/clear` or starting a new session creates a fresh timestamp and truncates events.
 6. `UserPromptSubmit`/`Stop` and `PreToolUse`/`PostToolUse` hooks append `P`/`S` and `T`/`D <tool>` lines to `events.log`; active time is computed additively (prompt→stop brackets plus a bounded reading grace) by `hooks/lib/active-time.awk`, which `SessionStart` deploys to `~/.session-tracker/active-time.awk`.
@@ -228,7 +228,7 @@ Everything the plugin writes lives in one directory:
 ~/.session-tracker/
 ├── history.db                  # the session store (SQLite)
 ├── config.yml                  # plugin config (sync credentials; chmod 600)
-├── current-session             # active session pointer (during live turn)
+├── current-sessions/           # AGY: one pointer per live turn (content = workspace)
 ├── solidtime-sync.log          # sync activity log
 ├── <session_id>/               # one directory per session
 │   ├── session-tracker         # start timestamp

@@ -10,11 +10,13 @@ Reset the session timer by overwriting the timestamp file with the current time.
 Run this command:
 
 ```bash
-if [ -n "${CLAUDE_SESSION_FILE:-}" ] && [ -f "$CLAUDE_SESSION_FILE" ]; then
-  echo "$(date +%s)" > "$CLAUDE_SESSION_FILE"
+SD="$(bash "${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/session-query.sh" session 2>/dev/null | jq -r '.dir // empty' 2>/dev/null)"
+if [ -n "$SD" ]; then
+  echo "$(date +%s)" > "$SD/session-tracker"
+  : > "$SD/events.log"
   echo "Session timer reset at $(date '+%H:%M')"
 else
-  echo "Session file not found - session-tracker hook may not be active"
+  echo "Session not found - session-tracker hook may not be active, or several conversations are live (run it from the project directory)"
 fi
 ```
 

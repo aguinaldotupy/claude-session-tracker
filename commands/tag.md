@@ -16,8 +16,8 @@ Parsed from `$ARGUMENTS`:
 
 ## Behavior
 
-1. If `$CLAUDE_SESSION_FILE` is unset or its file does not exist, report that the session-tracker hook is not active and stop.
-2. Compute the tag path: `"$(dirname "$CLAUDE_SESSION_FILE")/issue-tag"`.
+1. Resolve the current session directory with `session-query.sh session`. If it comes back empty, report that the session was not found and stop.
+2. Compute the tag path: `"<session dir>/issue-tag"`.
 3. If `$ARGUMENTS` equals `--clear`:
    - Delete the tag file if present.
    - Report: `Tag cleared — branch heuristic will be used on session end.`
@@ -29,11 +29,12 @@ Parsed from `$ARGUMENTS`:
 ## Implementation hint
 
 ```bash
-if [ -z "${CLAUDE_SESSION_FILE:-}" ] || [ ! -f "$CLAUDE_SESSION_FILE" ]; then
-  echo "Session file not found - session-tracker hook may not be active"
+SD="$(bash "${SESSION_TRACKER_HOME:-$HOME/.session-tracker}/session-query.sh" session 2>/dev/null | jq -r '.dir // empty' 2>/dev/null)"
+if [ -z "$SD" ]; then
+  echo "Session not found - session-tracker hook may not be active, or several conversations are live (run it from the project directory)"
   exit 0
 fi
-TAG_FILE="$(dirname "$CLAUDE_SESSION_FILE")/issue-tag"
+TAG_FILE="$SD/issue-tag"
 ARG="${ARGUMENTS:-}"
 if [ "$ARG" = "--clear" ]; then
   rm -f "$TAG_FILE"

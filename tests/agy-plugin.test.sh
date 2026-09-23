@@ -22,14 +22,14 @@ assert_eq "pre-invocation stdout is valid json" "{}" "$out_pi"
 assert_eq "session-tracker timestamp written" "yes" \
   "$([ -s "$SE/$CID/session-tracker" ] && echo yes || echo no)"
 assert_eq "cwd saved" "$PROJ" "$(cat "$SE/$CID/cwd" 2>/dev/null)"
-assert_eq "current-session recorded during active turn" "$CID" "$(cat "$SE/current-session" 2>/dev/null)"
+assert_eq "pointer recorded during active turn (content = workspace)" "$PROJ" "$(cat "$SE/current-sessions/$CID" 2>/dev/null)"
 assert_eq "events has prompt P" "P" "$(awk '{print $1}' "$SE/$CID/events.log" 2>/dev/null)"
 
-# 2. While session is active: session-query.sh status resolves via current-session fallback
+# 2. While session is active: session-query.sh status resolves via the pointer fallback
 status_active=$(SESSION_TRACKER_SESSION_ID="" CLAUDE_SESSION_ID="" CLAUDE_CODE_SESSION_ID="" \
   bash "$ROOT/hooks/lib/session-query.sh" status)
 
-assert_eq "status resolves active session via current-session fallback" "true" \
+assert_eq "status resolves active session via pointer fallback" "true" \
   "$(printf '%s' "$status_active" | jq -r '.live.started_at > 0')"
 
 # 3. PreToolUse: records T <tool> and outputs decision allow
@@ -62,8 +62,8 @@ out_stop=$(printf '{"conversationId":"%s","workspacePaths":["%s"],"terminationRe
 
 assert_eq "stop stdout is decision allow" '{"decision":"allow"}' "$out_stop"
 assert_eq "events has S" "S" "$(awk 'NR==5{print $1}' "$SE/$CID/events.log" 2>/dev/null)"
-assert_eq "current-session cleared after stop" "no" \
-  "$([ -f "$SE/current-session" ] && echo yes || echo no)"
+assert_eq "pointer cleared after stop" "no" \
+  "$([ -f "$SE/current-sessions/$CID" ] && echo yes || echo no)"
 
 # Verify SQLite store row was written
 if command -v sqlite3 >/dev/null 2>&1; then
@@ -90,13 +90,15 @@ out_pi2=$(printf '{"conversationId":"%s","workspacePaths":["%s"],"invocationNum"
   | bash "$ADAPTER" pre-invocation)
 
 assert_eq "turn 2 preserves original start timestamp" "$orig_ts" "$(cat "$SE/$CID/session-tracker")"
+assert_eq "status still resolves live session on turn 2 (checkpoint row exists)" "$orig_ts" \
+  "$(bash "$ROOT/hooks/lib/session-query.sh" status | jq -r '.live.started_at')"
 
 out_stop2=$(printf '{"conversationId":"%s","workspacePaths":["%s"],"terminationReason":"model_stop"}' "$CID" "$PROJ" \
   | bash "$ADAPTER" stop)
 
 assert_eq "turn 2 stop stdout is decision allow" '{"decision":"allow"}' "$out_stop2"
-assert_eq "current-session cleared after turn 2 stop" "no" \
-  "$([ -f "$SE/current-session" ] && echo yes || echo no)"
+assert_eq "pointer cleared after turn 2 stop" "no" \
+  "$([ -f "$SE/current-sessions/$CID" ] && echo yes || echo no)"
 
 if command -v sqlite3 >/dev/null 2>&1; then
   assert_eq "turn 2 upserts into single row" "1" \
@@ -112,4 +114,50 @@ out_weird=$(jq -cn --arg cid "$WEIRD_CID" --arg p "$WEIRD_DIR" '{conversationId:
 assert_eq "weird path pre-invocation is valid json" "{}" "$out_weird"
 assert_eq "weird path cwd saved correctly" "$WEIRD_DIR" "$(cat "$SE/$WEIRD_CID/cwd" 2>/dev/null)"
 
+# 9. Two live conversations (weird-conv from step 8 is still mid-turn): the
+# pointer is picked by workspace, never guessed.
+RESET_CID="reset-conv-789"
+printf '{"conversationId":"%s","workspacePaths":["%s"],"invocationNum":1}' "$RESET_CID" "$PROJ" \
+  | bash "$ADAPTER" pre-invocation >/dev/null 2>&1
+resolve() { (cd "$1" && bash "$SE/session-query.sh" session | jq -r '.session_id'); }
+assert_eq "two live conversations: resolved by workspace" "$RESET_CID" "$(resolve "$PROJ/")"
+assert_eq "two live conversations: other workspace" "$WEIRD_CID" "$(resolve "$WEIRD_DIR")"
+assert_eq "two live conversations, no matching workspace: nothing" "" "$(resolve "$TMP")"
+assert_eq "env id beats pointers" "$CID" \
+  "$(cd "$PROJ" && ANTIGRAVITY_CONVERSATION_ID="$CID" bash "$SE/session-query.sh" session | jq -r '.session_id')"
+
+# A pointer left by a turn that died is ignored once the reaper closed it...
+if command -v sqlite3 >/dev/null 2>&1; then
+  sqlite3 "$SE/history.db" "UPDATE sessions SET reason='stale', end_ts=9999999999 WHERE session_id='$CID';"
+  mkdir -p "$SE/current-sessions"; printf '%s\n' "$PROJ" > "$SE/current-sessions/$CID"
+  assert_eq "reaped pointer ignored" "$RESET_CID" "$(resolve "$PROJ")"
+  rm -f "$SE/current-sessions/$CID"
+fi
+
+# Run the snippets exactly as shipped, so the test breaks when they drift.
+reset_snippet() { awk '/^```bash$/{f=1;next} /^```$/{f=0} f' "$1"; }
+assert_eq "reset command and skill ship the same snippet" \
+  "$(reset_snippet "$ROOT/skills/reset-session/SKILL.md" | grep -v '^ *#')" \
+  "$(reset_snippet "$ROOT/commands/reset-session.md")"
+
+echo 1000 > "$SE/$RESET_CID/session-tracker"
+wc_weird_before="$(wc -c < "$SE/$WEIRD_CID/events.log" | tr -d ' ')"
+reset_out=$(cd "$PROJ" && bash -c "$(reset_snippet "$ROOT/skills/reset-session/SKILL.md")")
+
+assert_eq "reset-session reports success" "1" "$(printf '%s' "$reset_out" | grep -c "Session timer reset at")"
+assert_eq "reset-session rewrites start timestamp" "yes" \
+  "$([ "$(cat "$SE/$RESET_CID/session-tracker")" -gt 1000 ] && echo yes || echo no)"
+assert_eq "reset-session truncates events.log" "0" "$(wc -c < "$SE/$RESET_CID/events.log" | tr -d ' ')"
+assert_eq "reset-session leaves the other conversation alone" "$wc_weird_before" \
+  "$(wc -c < "$SE/$WEIRD_CID/events.log" | tr -d ' ')"
+
+reset_amb=$(cd "$TMP" && bash -c "$(reset_snippet "$ROOT/skills/reset-session/SKILL.md")")
+assert_eq "ambiguous reset refuses" "1" "$(printf '%s' "$reset_amb" | grep -c "Session not found")"
+
+# 10. /tag resolves the session the same way (it used to need CLAUDE_SESSION_FILE)
+tag_out=$(cd "$PROJ" && ARGUMENTS="LIN-42" bash -c "$(reset_snippet "$ROOT/commands/tag.md")")
+assert_eq "tag writes issue-tag in AGY" "LIN-42" "$(cat "$SE/$RESET_CID/issue-tag" 2>/dev/null)"
+assert_eq "tag reports success" "1" "$(printf '%s' "$tag_out" | grep -c "Tagged current session as LIN-42")"
+
 finish
+

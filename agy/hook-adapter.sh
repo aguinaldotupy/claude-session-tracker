@@ -57,9 +57,11 @@ CWD_PATH="$(printf '%s' "$INPUT" | jq -r '(.workspacePaths[0]) // .cwd // empty'
 
 case "$EVENT" in
   pre-invocation)
-    mkdir -p "$HOME_DIR" 2>/dev/null || true
-    # Record current session for skills that don't receive environment variables
-    printf '%s' "$CONV_ID" > "$HOME_DIR/current-session" 2>/dev/null || true
+    # Per-conversation pointer for skills, which get no conversation id in their
+    # env. One file per conversation (content = workspace) so concurrent
+    # conversations don't overwrite each other; session-query.sh resolves them.
+    mkdir -p "$HOME_DIR/current-sessions" 2>/dev/null || true
+    printf '%s\n' "$CWD_PATH" > "$HOME_DIR/current-sessions/$CONV_ID" 2>/dev/null || true
 
     # Lazy SessionStart if this conversation is seen for the first time
     if [ ! -f "$HOME_DIR/$CONV_ID/session-tracker" ]; then
@@ -112,8 +114,8 @@ case "$EVENT" in
       '{session_id:$session_id, cwd:$cwd, reason:$reason}' \
       | bash "$ROOT/hooks/session-end.sh" >/dev/null 2>&1 || true
 
-    # Clear active session pointer when the session terminates/stops
-    rm -f "$HOME_DIR/current-session" 2>/dev/null || true
+    # The turn is over: this conversation is no longer the one skills act on.
+    rm -f "$HOME_DIR/current-sessions/$CONV_ID" 2>/dev/null || true
     echo '{"decision":"allow"}'
     ;;
 

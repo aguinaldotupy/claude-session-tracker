@@ -38,7 +38,7 @@ Regardless of which tool you use (or if you switch between them throughout the d
 ~/.session-tracker/
 ├── history.db               # SQLite database containing all sessions and project links
 ├── config.yml               # Central configuration (e.g. Solidtime sync credentials)
-├── current-session          # Active session pointer (during live turns)
+├── current-sessions/         # AGY: one pointer per live turn (content = workspace)
 ├── solidtime-sync.log       # Background sync logs
 └── <session_id>/            # Per-session data
     ├── session-tracker      # Start timestamp

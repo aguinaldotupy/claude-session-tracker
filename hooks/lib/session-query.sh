@@ -21,21 +21,59 @@ _sq_source() {
 
 _sq_int() { case "$1" in ''|*[!0-9]*) echo 0 ;; *) echo "$1" ;; esac; }
 
+# A reaped pointer is stale: the reaper closed that conversation at its last
+# event (reason 'stale') and nothing has happened since. A stored row alone
+# doesn't mean ended — AGY checkpoints every turn's Stop into the store, so a
+# live conversation has a row from turn 2 on.
+_sq_reaped() {
+  [ "$(_sq_source)" = sqlite ] && st_has_sqlite || return 1
+  local end_ts last_ts
+  end_ts="$(_sq_int "$(sqlite3 "$(st_db_path)" "SELECT end_ts FROM sessions WHERE session_id='$(st_sql_escape "$1")' AND reason='stale';" 2>/dev/null)")"
+  last_ts="$(_sq_int "$(tail -n1 "$_SQ_ENV/$1/events.log" 2>/dev/null | awk '{print $2}')")"
+  [ "$end_ts" -gt 0 ] && [ "$end_ts" -ge "$last_ts" ]
+}
+
+# The one place that decides which session "current" means; every skill and
+# command goes through `session-query.sh session`. Order: --session, the env
+# ids harnesses export, CLAUDE_SESSION_FILE (printed by SessionStart), then the
+# AGY per-conversation pointers (<home>/current-sessions/<sid>, content = the
+# conversation's workspace). Several live pointers are told apart by $PWD; if
+# that still leaves more than one, resolve nothing — reset truncates events.log,
+# so guessing would wipe another conversation's time.
+# ponytail: two concurrent AGY turns in the same workspace stay ambiguous until
+# AGY exports ANTIGRAVITY_CONVERSATION_ID to commands.
+sq_resolve_sid() {
+  local sid="$1"
+  [ -z "$sid" ] && sid="${SESSION_TRACKER_SESSION_ID:-${ANTIGRAVITY_CONVERSATION_ID:-${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}}}"
+  [ -z "$sid" ] && [ -n "${CLAUDE_SESSION_FILE:-}" ] && sid="$(basename "$(dirname "$CLAUDE_SESSION_FILE")")"
+  if [ -z "$sid" ] && [ -d "$_SQ_ENV/current-sessions" ]; then
+    local p cand ws live="" here="" nlive=0 nhere=0
+    for p in "$_SQ_ENV/current-sessions"/*; do
+      [ -f "$p" ] || continue
+      cand="$(basename "$p")"
+      _sq_reaped "$cand" && continue
+      live="$cand"; nlive=$((nlive + 1))
+      ws="$(head -n1 "$p" 2>/dev/null)"
+      case "$PWD/" in "${ws:-/nonexistent}"/*) here="$cand"; nhere=$((nhere + 1)) ;; esac
+    done
+    if [ "$nlive" -eq 1 ]; then sid="$live"
+    elif [ "$nhere" -eq 1 ]; then sid="$here"; fi
+  fi
+  printf '%s' "$sid"
+}
+
+sq_session() {
+  local sid="" dir=""
+  while [ $# -gt 0 ]; do case "$1" in --session) sid="$2"; shift 2 ;; *) shift ;; esac; done
+  sid="$(sq_resolve_sid "$sid")"
+  [ -n "$sid" ] && [ -f "$_SQ_ENV/$sid/session-tracker" ] && dir="$_SQ_ENV/$sid"
+  jq -n --arg sid "$sid" --arg dir "$dir" '{session_id:$sid, dir:$dir}'
+}
+
 sq_status() {
   local sid="" now sdir start_ts live_elapsed live_active issue src
   while [ $# -gt 0 ]; do case "$1" in --session) sid="$2"; shift 2 ;; *) shift ;; esac; done
-  [ -z "$sid" ] && sid="${SESSION_TRACKER_SESSION_ID:-${ANTIGRAVITY_CONVERSATION_ID:-${CLAUDE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}}}"
-  if [ -z "$sid" ] && [ -f "$_SQ_ENV/current-session" ]; then
-    local cand; cand="$(head -n1 "$_SQ_ENV/current-session" 2>/dev/null | tr -d '[:space:]')"
-    if [ -n "$cand" ]; then
-      local ended=false
-      if [ "$(_sq_source)" = sqlite ] && st_has_sqlite; then
-        local count; count="$(sqlite3 "$(st_db_path)" "SELECT COUNT(*) FROM sessions WHERE session_id='$(st_sql_escape "$cand")';" 2>/dev/null)"
-        [ "${count:-0}" -gt 0 ] && ended=true
-      fi
-      [ "$ended" = false ] && sid="$cand"
-    fi
-  fi
+  sid="$(sq_resolve_sid "$sid")"
   now="$(date +%s)"
   src="$(_sq_source)"
   sdir="$_SQ_ENV/$sid"
@@ -245,6 +283,7 @@ _sq_main() {
   local cmd="${1:-}"; shift 2>/dev/null || true
   case "$cmd" in
     status)   sq_status "$@" ;;
+    session)  sq_session "$@" ;;
     history)  sq_history "$@" ;;
     timeline) sq_timeline "$@" ;;
     worklog)  sq_worklog "$@" ;;
