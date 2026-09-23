@@ -5,6 +5,33 @@ All notable changes to this plugin are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.0] - 2026-09-23
+
+The plugin now runs under Google Antigravity too,
+alongside Claude Code and opencode — same store, same worklog, same Solidtime
+sync.
+
+### Added
+- **Antigravity support.** `agy/` maps Antigravity's lifecycle hooks
+  (`PreInvocation`, `PreToolUse`, `PostToolUse`, `Stop`) onto the same shell
+  hooks the other editors drive, and checkpoints each turn into the history
+  store. A scheduled sidecar sweeps crashed sessions and runs the Solidtime sync
+  every 5 minutes. Skills are shared. See `docs/antigravity.md`.
+- Installation tutorials for Claude Code, opencode and Antigravity.
+
+### Fixed
+- **Antigravity: the live session disappeared from the second turn on.** Every
+  turn's checkpoint made a running conversation look finished, so
+  `session-status` and `sync` reported no live session.
+- **Antigravity: reset could wipe the wrong conversation.** With two
+  conversations running, the active-session pointer was shared, so resetting one
+  could erase the other's recorded time. Each conversation now has its own
+  pointer under `~/.session-tracker/current-sessions/`, picked by the project
+  directory; when that is still ambiguous, reset refuses instead of guessing.
+- **`/session-tracker:tag` works in Antigravity and opencode.** It only looked
+  at a variable those editors never set. Reset and tag now find the session
+  through `session-query.sh session`, the same lookup `session-status` uses.
+
 ## [4.0.0] - 2026-08-24
 
 Everything the plugin writes moves out of `~/.claude/`, sessions that die
@@ -283,6 +310,7 @@ have scripts pointing at the old paths.
 - Initial release: `SessionStart` hook + `session-status` skill + optional
   statusline snippet for live elapsed time.
 
+[4.1.0]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v4.0.0...v4.1.0
 [4.0.0]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v3.2.0...v4.0.0
 [3.2.0]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v3.1.1...v3.2.0
 [3.1.1]: https://github.com/aguinaldotupy/claude-session-tracker/compare/v3.1.0...v3.1.1
