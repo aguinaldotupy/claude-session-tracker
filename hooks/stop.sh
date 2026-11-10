@@ -15,6 +15,15 @@ set -uo pipefail
 
   mkdir -p "$SESSION_DIR"
   printf 'S %s\n' "$(date +%s)" >> "$EVENTS_FILE"
+
+  # Cloud sessions (claude.ai/code, Claude Projects threads) run in a VM that is
+  # paused and reclaimed on its own schedule: SessionEnd may never fire and the
+  # store dies with the box. Sync after every turn instead -- the per-bracket
+  # ledger makes repeats idempotent and posts a grown bracket's tail only.
+  if [ "${CLAUDE_CODE_REMOTE:-}" = "true" ] && [ -f "$ST_HOME/solidtime-sync.sh" ] \
+     && { [ -f "$ST_HOME/config.yml" ] || [ -n "${SOLIDTIME_URL:-}" ]; }; then
+    ( bash "$ST_HOME/solidtime-sync.sh" --session "$SESSION_ID" >/dev/null 2>&1 & ) 2>/dev/null || true
+  fi
 } || exit 0
 
 exit 0

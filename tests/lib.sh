@@ -5,7 +5,7 @@
 unset SESSION_IDLE_THRESHOLD_SECONDS
 
 # Unset harness session variables so tests run clean regardless of runner environment.
-unset ANTIGRAVITY_CONVERSATION_ID CLAUDE_SESSION_ID CLAUDE_CODE_SESSION_ID SESSION_TRACKER_SESSION_ID
+unset ANTIGRAVITY_CONVERSATION_ID CLAUDE_SESSION_ID CLAUDE_CODE_SESSION_ID SESSION_TRACKER_SESSION_ID CLAUDE_CODE_REMOTE
 
 # Same reason: SOLIDTIME_* are a documented config path (the env-var mode for
 # ephemeral hosts), so a developer who actually uses sync would otherwise fail

@@ -58,4 +58,35 @@ echo '{"session_id":"spaced-1","source":"startup"}' \
 assert_eq "spaced plugin root: session-start still writes timestamp" "yes" \
   "$([ -f "$HOME/.session-tracker/spaced-1/session-tracker" ] && echo yes || echo no)"
 
+# --- cloud sessions (CLAUDE_CODE_REMOTE=true) sync at every Stop: the VM is
+#     ephemeral and may be reclaimed without a SessionEnd, so the session's
+#     closed brackets must leave the box while it still exists. ---
+H="$TMP/cloud"; mkdir -p "$H/.session-tracker"
+cat > "$H/.session-tracker/solidtime-sync.sh" <<'STUB'
+#!/usr/bin/env bash
+sleep 0.3
+printf '%s\n' "$*" > "$HOME/launched"
+STUB
+run_stop() { echo '{"session_id":"cloud-1"}' | HOME="$H" "$@" bash "$ROOT/hooks/stop.sh"; }
+wait_launch() { i=0; while [ $i -lt 20 ] && [ ! -f "$H/launched" ]; do sleep 0.1; i=$((i + 1)); done; }
+
+SECONDS=0
+run_stop env CLAUDE_CODE_REMOTE=true SOLIDTIME_URL=https://time.test
+assert_eq "cloud stop returns fast" "yes" "$([ "$SECONDS" -lt 2 ] && echo yes || echo no)"
+wait_launch
+assert_eq "cloud stop syncs the session in background" "--session cloud-1" "$(cat "$H/launched" 2>/dev/null)"
+assert_eq "cloud stop still records S" "S" "$(tail -n1 "$H/.session-tracker/cloud-1/events.log" | cut -d' ' -f1)"
+
+rm -f "$H/launched"
+run_stop env -u CLAUDE_CODE_REMOTE SOLIDTIME_URL=https://time.test
+sleep 0.6
+assert_eq "local stop does not sync (SessionEnd and the reaper cover it)" "no" \
+  "$([ -f "$H/launched" ] && echo yes || echo no)"
+
+rm -f "$H/launched"
+run_stop env CLAUDE_CODE_REMOTE=true -u SOLIDTIME_URL
+sleep 0.6
+assert_eq "cloud stop without sync config launches nothing" "no" \
+  "$([ -f "$H/launched" ] && echo yes || echo no)"
+
 finish

@@ -5,6 +5,25 @@ All notable changes to this plugin are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Cloud sessions and Claude Projects threads sync to Solidtime after every
+  turn.** These sessions run in a VM that can be paused and reclaimed without
+  the session ever ending, which would take the local store with it. Each turn's
+  finished time is now sent as soon as the turn ends. Configure it with the
+  `SOLIDTIME_*` environment variables on the cloud environment and allow the
+  Solidtime host in its network access. Repeated syncs never double-post. The
+  README explains where cloud threads get their plugins from: Project settings
+  > Plugins, not your local install.
+
+### Fixed
+- **The plugin no longer takes over Claude Code's own `~/.claude/session-env`.**
+  On any machine that never ran a tracker older than v4, including every fresh
+  cloud VM, the move to `~/.session-tracker` treated Claude Code's per-session
+  folder as an old store and replaced it with a link into ours. It now moves
+  only a folder that actually holds tracker data.
+
 ## [4.1.1] - 2026-09-23
 
 ### Fixed

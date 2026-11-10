@@ -73,6 +73,30 @@ Then add or update your `~/.claude/settings.json`:
 }
 ```
 
+### Method 4: Claude Projects and cloud sessions (claude.ai/code)
+
+Project threads and other cloud sessions run in a throwaway Ubuntu VM. They load **nothing** from your machine: not plugins installed with Methods 1–3, and not plugins your repository's `.claude/settings.json` turns on. Adding the marketplace again from the desktop app's Code tab doesn't help either. That dialog manages your *local* plugins, which is why it answers "A marketplace with the same name as this repository already exists".
+
+1. **Add the plugin to the project.** Open **Project settings > Plugins** and add `session-tracker`. It loads into each *new* thread; threads already running keep their old setup.
+2. **Give the cloud environment the Solidtime config.** In **Project settings > Environment**, edit the environment and set:
+   ```
+   SOLIDTIME_URL=https://your-solidtime.example.com
+   SOLIDTIME_TOKEN=...
+   SOLIDTIME_ORG_ID=...
+   ```
+   Anyone who can use that environment can read its variables. Use an environment only you use, with a token you can revoke.
+3. **Allow the Solidtime host** under the environment's network access. The default allowlist blocks it, and every sync then fails with a proxy `403`.
+4. **Start a new thread** and work normally.
+
+What to expect:
+
+- **Cloud time only reaches Solidtime.** The VM's `~/.session-tracker` disappears with the VM, so cloud threads never show up in your local history, worklog or status line.
+- **Sync runs after every turn**, not at session end, because a paused VM can be reclaimed without the session ever ending. Repeated syncs don't double-post: a turn that extends an earlier time block sends only the new part.
+- **No `sqlite3` in the VM.** The store falls back to its JSON-lines file, with nothing for you to set up.
+- **To check a thread**, ask it to run `bash ~/.session-tracker/session-query.sh status`. A `sync.last_error` value points at the problem (network, token or org id). The full log is at `~/.session-tracker/solidtime-sync.log` inside the VM.
+
+Plain claude.ai chat Projects ignore plugin hooks entirely, so nothing can be tracked there.
+
 ---
 
 ## Optional: Status Line Integration
@@ -199,6 +223,7 @@ claude plugin uninstall session-tracker@aguinaldotupy --scope user
 ## Troubleshooting
 
 - **Session not recording?** Verify that `~/.session-tracker/` exists. Ensure `bash` and `jq` are in your `$PATH`.
+- **Nothing from a Claude Project / claude.ai/code thread?** Expected locally: cloud threads run in their own VM. See [Method 4](#method-4-claude-projects-and-cloud-sessions-claudeaicode); their time lands only in Solidtime.
 - **Status line shows `--`?** The statusline snippet resolves the active session via `CLAUDE_SESSION_ID` or fallback directory. Ensure the snippet has executable permissions.
 - **Inspect raw logs:** Check `~/.session-tracker/` files:
   - SQLite database: `~/.session-tracker/history.db`

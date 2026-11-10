@@ -47,6 +47,19 @@ claude plugin install session-tracker@aguinaldotupy --scope user
 ```
 *For local dev, manual clone, or status line integration, see the [Claude Code Guide](docs/claude-code.md).*
 
+### Claude Projects and cloud sessions (claude.ai/code)
+
+Cloud threads don't load anything installed on your machine. A marketplace that already exists in your local Claude Code (the desktop app's Code tab reports "a marketplace with the same name already exists") does not reach them either. To track a project's threads:
+
+1. Add the plugin in **Project settings > Plugins**; it loads into each *new* thread.
+2. Each thread runs in a throwaway VM, so the local store dies with it and nothing shows up in your local history or statusline. Solidtime is the only place cloud time can land. In **Project settings > Environment**, give the cloud environment `SOLIDTIME_URL`, `SOLIDTIME_TOKEN` and `SOLIDTIME_ORG_ID` as environment variables, and allow your Solidtime host under network access (the default allowlist blocks it).
+
+   The token sits in a plain environment variable that anyone who can use that environment can read, so use an environment only you use, with a token you can revoke.
+
+In the cloud, the plugin syncs after every turn rather than at session end, because a paused VM can be reclaimed without ever ending the session. `sqlite3` isn't installed there, so the store falls back to its JSON-lines file. That needs no setup.
+
+Claude Desktop's Cowork and plain claude.ai chat Projects are different products. Chat ignores plugin hooks altogether, so nothing can be tracked there.
+
 ### OpenCode
 
 ```bash
@@ -190,7 +203,7 @@ which walks you through creating an API token in the Solidtime UI, finding the o
 
 Headless or ephemeral environments (CI, cloud, sandbox VMs) where writing that file is awkward can instead set `SOLIDTIME_URL`, `SOLIDTIME_TOKEN`, and `SOLIDTIME_ORG_ID` as environment variables. The file, when present, always takes precedence over the environment.
 
-Sync is background and local-first: hooks never wait on the network, and a Solidtime instance that's down for days loses nothing — every finished session stays in the local store until it syncs. It runs on three triggers: automatically in the background right after a session ends, again on the next `SessionStart` to retry anything still pending, and on demand via `/session-tracker:sync`. Only sessions that end after you configure sync are sent — history recorded before setup stays local, so turning sync on never floods your Solidtime account with past work. Trigger a sync manually, or check sync health (pending count, last error), with:
+Sync is background and local-first: hooks never wait on the network, and a Solidtime instance that's down for days loses nothing — every finished session stays in the local store until it syncs. It runs on three triggers: automatically in the background right after a session ends, again on the next `SessionStart` to retry anything still pending, and on demand via `/session-tracker:sync`. In cloud sessions it also runs after every turn (see [Claude Projects and cloud sessions](#claude-projects-and-cloud-sessions-claudeaicode)). Only sessions that end after you configure sync are sent — history recorded before setup stays local, so turning sync on never floods your Solidtime account with past work. Trigger a sync manually, or check sync health (pending count, last error), with:
 
 ```
 /session-tracker:sync
