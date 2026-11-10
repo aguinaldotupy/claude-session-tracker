@@ -52,7 +52,7 @@ claude plugin install session-tracker@aguinaldotupy --scope user
 Cloud threads don't load anything installed on your machine. A marketplace that already exists in your local Claude Code (the desktop app's Code tab reports "a marketplace with the same name already exists") does not reach them either. To track a project's threads:
 
 1. Add the plugin in **Project settings > Plugins**; it loads into each *new* thread.
-2. Each thread runs in a throwaway VM, so the local store dies with it and nothing shows up in your local history or statusline. Solidtime is the only place cloud time can land. In **Project settings > Environment**, give the cloud environment `SOLIDTIME_URL`, `SOLIDTIME_TOKEN` and `SOLIDTIME_ORG_ID` as environment variables, and allow your Solidtime host under network access (the default allowlist blocks it).
+2. Each thread runs in a throwaway VM, so the local store dies with it and nothing shows up in your local history or statusline. Solidtime is the only place cloud time can land. Create a cloud environment of your own: at claude.ai/code, open the environment selector under the message box and choose **New environment**, because the built-in Default environment holds no variables. In it, set `SOLIDTIME_URL`, `SOLIDTIME_TOKEN` and `SOLIDTIME_ORG_ID` under **Environment variables**, and set **Network access** to **Custom** with your Solidtime host allowed (the default allowlist blocks it). Then pick that environment in **Project settings > Environment**.
 
    The token sits in a plain environment variable that anyone who can use that environment can read, so use an environment only you use, with a token you can revoke.
 

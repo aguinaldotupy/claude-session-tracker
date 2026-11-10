@@ -78,14 +78,14 @@ Then add or update your `~/.claude/settings.json`:
 Project threads and other cloud sessions run in a throwaway Ubuntu VM. They load **nothing** from your machine: not plugins installed with Methods 1–3, and not plugins your repository's `.claude/settings.json` turns on. Adding the marketplace again from the desktop app's Code tab doesn't help either. That dialog manages your *local* plugins, which is why it answers "A marketplace with the same name as this repository already exists".
 
 1. **Add the plugin to the project.** Open **Project settings > Plugins** and add `session-tracker`. It loads into each *new* thread; threads already running keep their old setup.
-2. **Give the cloud environment the Solidtime config.** In **Project settings > Environment**, edit the environment and set:
+2. **Give a cloud environment the Solidtime config.** Variables belong to a *cloud environment*, not to the project, and the built-in **Default** environment can't hold any. At [claude.ai/code](https://claude.ai/code), on the new-session screen, open the environment selector (the first control under the message box) and choose **New environment**; to change one you already have, hover its row under **Cloud** and click the settings icon. In its **Environment variables** row (`.env` format), set:
    ```
    SOLIDTIME_URL=https://your-solidtime.example.com
    SOLIDTIME_TOKEN=...
    SOLIDTIME_ORG_ID=...
    ```
    Anyone who can use that environment can read its variables. Use an environment only you use, with a token you can revoke.
-3. **Allow the Solidtime host** under the environment's network access. The default allowlist blocks it, and every sync then fails with a proxy `403`.
+3. **Allow the Solidtime host** in the same dialog: set **Network access** to **Custom** and add your Solidtime host to the allowed domains. The default **Trusted** allowlist blocks it, and every sync then fails with a proxy `403`. Save with **Add environment** or **Save changes**, then pick that environment for the project in **Project settings > Environment**.
 4. **Start a new thread** and work normally.
 
 What to expect:
