@@ -78,6 +78,12 @@ Then add or update your `~/.claude/settings.json`:
 Project threads and other cloud sessions run in a throwaway Ubuntu VM. They load **nothing** from your machine: not plugins installed with Methods 1–3, and not plugins your repository's `.claude/settings.json` turns on. Adding the marketplace again from the desktop app's Code tab doesn't help either. That dialog manages your *local* plugins, which is why it answers "A marketplace with the same name as this repository already exists".
 
 1. **Add the plugin to the project.** Open **Project settings > Plugins** and add `session-tracker`. It loads into each *new* thread; threads already running keep their old setup.
+
+   **If the plugin isn't offered there**, load it through the cloud environment instead (same dialog as step 2):
+   - **Setup script**: `git clone --depth 1 https://github.com/aguinaldotupy/claude-session-tracker.git /opt/session-tracker` (github.com is on the default allowlist).
+   - **Environment variables**: `CLAUDE_CODE_PLUGIN_DIRS=/opt/session-tracker`
+
+   Claude Code then loads the plugin in every session started in that environment, the same way `--plugin-dir` does. The setup script's result is cached with the environment, so the plugin stays at the version first cloned. To update it, change the script (for example add a comment), which rebuilds the cache on the next session.
 2. **Give a cloud environment the Solidtime config.** Variables belong to a *cloud environment*, not to the project, and the built-in **Default** environment can't hold any. At [claude.ai/code](https://claude.ai/code), on the new-session screen, open the environment selector (the first control under the message box) and choose **New environment**; to change one you already have, hover its row under **Cloud** and click the settings icon. In its **Environment variables** row (`.env` format), set:
    ```
    SOLIDTIME_URL=https://your-solidtime.example.com
