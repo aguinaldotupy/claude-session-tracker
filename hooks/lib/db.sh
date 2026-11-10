@@ -20,6 +20,16 @@ st_migrate_home() {
   if [ "$new" = "$legacy" ]; then return 0; fi
   # Only a real directory migrates: a symlink means we already ran.
   if [ ! -d "$legacy" ] || [ -L "$legacy" ]; then return 0; fi
+  # ...and only one that holds a tracker store. Claude Code creates this same
+  # path for its own per-session CLAUDE_ENV_FILE scripts, so on any host that
+  # never ran a pre-v4 tracker (every fresh cloud VM) it is the harness's dir,
+  # not ours, and moving it would leave Claude Code writing through our symlink.
+  local f found=""
+  for f in "$legacy"/history.db "$legacy"/history.jsonl* "$legacy"/solidtime.conf \
+           "$legacy"/active-time.awk "$legacy"/*/session-tracker "$legacy"/*/events.log; do
+    [ -e "$f" ] && { found=1; break; }
+  done
+  [ -n "$found" ] || return 0
   # A hook that fired before SessionStart may have already mkdir'd an empty new
   # home; rmdir clears that (and only that) so the move still happens. A new home
   # with real content is never clobbered — leave both and let the user merge.

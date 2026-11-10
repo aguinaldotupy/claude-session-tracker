@@ -40,7 +40,7 @@ assert_eq "second migration keeps the symlink" "yes" "$([ -L "$LEGACY" ] && echo
 
 # --- never clobbers a new home that already holds data ---
 H2="$TMP/h2"; mkdir -p "$H2/.claude/session-env" "$H2/.session-tracker"
-echo legacy > "$H2/.claude/session-env/marker"
+echo legacy > "$H2/.claude/session-env/history.jsonl"
 echo current > "$H2/.session-tracker/marker"
 HOME="$H2" st_migrate_home
 assert_eq "populated new home is not overwritten" "current" "$(cat "$H2/.session-tracker/marker")"
@@ -49,10 +49,10 @@ assert_eq "legacy dir left alone when both hold data" "no" \
 
 # --- an empty new home (a hook that fired before SessionStart) still migrates ---
 H4="$TMP/h4"; mkdir -p "$H4/.claude/session-env" "$H4/.session-tracker"
-echo legacy > "$H4/.claude/session-env/marker"
+echo legacy > "$H4/.claude/session-env/history.jsonl"
 HOME="$H4" st_migrate_home
 assert_eq "empty new home does not block the migration" "legacy" \
-  "$(cat "$H4/.session-tracker/marker" 2>/dev/null)"
+  "$(cat "$H4/.session-tracker/history.jsonl" 2>/dev/null)"
 
 # --- fresh install: no legacy dir, no symlink invented ---
 H3="$TMP/h3"; mkdir -p "$H3"
@@ -76,7 +76,7 @@ assert_eq "symlink was not buried inside the new home" "no" \
 #     loudly rather than silently stop testing if that call ever goes away. ---
 H7="$TMP/h7"; L7="$H7/.claude/session-env"; N7="$H7/.session-tracker"
 mkdir -p "$L7"
-echo winner > "$L7/payload"
+echo winner > "$L7/history.jsonl"
 RACED=""
 mkdir() {
   command mkdir "$@"
@@ -91,9 +91,31 @@ unset -f mkdir
 assert_eq "the race was actually staged" "yes" "$RACED"
 assert_eq "loser leaves the winner's symlink intact" "yes" \
   "$([ -L "$L7" ] && echo yes || echo no)"
-assert_eq "legacy path still resolves to the data" "winner" "$(cat "$L7/payload" 2>/dev/null)"
+assert_eq "legacy path still resolves to the data" "winner" "$(cat "$L7/history.jsonl" 2>/dev/null)"
 assert_eq "symlink not buried inside the new home" "no" \
   "$([ -e "$N7/session-env" ] && echo yes || echo no)"
+
+# --- Claude Code itself owns ~/.claude/session-env on every machine (CLAUDE_ENV_FILE
+#     scripts, one dir per session). On a host that never ran a pre-v4 tracker
+#     -- every fresh cloud VM -- that dir holds none of our data, and moving it
+#     would hand the harness's own directory to us behind a symlink. ---
+H8="$TMP/h8"; L8="$H8/.claude/session-env"
+mkdir -p "$L8/1825b5f8-harness-sid"
+echo 'export FOO=1' > "$L8/1825b5f8-harness-sid/sessionstart-hook-0.sh"
+HOME="$H8" st_migrate_home
+assert_eq "harness-only session-env is not migrated" "no" \
+  "$([ -L "$L8" ] && echo yes || echo no)"
+assert_eq "harness files stay where Claude Code put them" "export FOO=1" \
+  "$(cat "$L8/1825b5f8-harness-sid/sessionstart-hook-0.sh" 2>/dev/null)"
+assert_eq "no new home invented for a harness-only dir" "no" \
+  "$([ -e "$H8/.session-tracker" ] && echo yes || echo no)"
+
+# --- a pre-v3 store (session dirs only, no history file yet) is still ours ---
+H9="$TMP/h9"; mkdir -p "$H9/.claude/session-env/old"
+printf 'P 1\nS 2\n' > "$H9/.claude/session-env/old/events.log"
+HOME="$H9" st_migrate_home
+assert_eq "events.log-only legacy store migrates" "yes" \
+  "$([ -f "$H9/.session-tracker/old/events.log" ] && echo yes || echo no)"
 
 # --- end to end through the SessionStart hook ---
 H5="$TMP/h5"; mkdir -p "$H5/.claude/session-env/old-sess"
