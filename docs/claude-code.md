@@ -80,8 +80,8 @@ Project threads and other cloud sessions run in a throwaway Ubuntu VM. They load
 1. **Add the plugin to the project.** Open **Project settings > Plugins** and add `session-tracker`. It loads into each *new* thread; threads already running keep their old setup.
 
    **If the plugin isn't offered there**, load it through the cloud environment instead (same dialog as step 2):
-   - **Setup script**: `git clone --depth 1 https://github.com/aguinaldotupy/claude-session-tracker.git /opt/session-tracker` (github.com is on the default allowlist).
-   - **Environment variables**: `CLAUDE_CODE_PLUGIN_DIRS=/opt/session-tracker`
+   - **Setup script**: add the line `git clone --depth 1 https://github.com/aguinaldotupy/claude-session-tracker.git /opt/session-tracker` (GitHub is always reachable). If the environment already has a script, add the line to it instead of replacing what's there.
+   - **Environment variables**: `CLAUDE_CODE_PLUGIN_DIRS=/opt/session-tracker`. If the variable already lists other plugin directories, append ours with a colon (`/opt/other-plugin:/opt/session-tracker`); replacing the value would unload the others.
 
    Claude Code then loads the plugin in every session started in that environment, the same way `--plugin-dir` does. The setup script's result is cached with the environment, so the plugin stays at the version first cloned. To update it, change the script (for example add a comment), which rebuilds the cache on the next session.
 2. **Give a cloud environment the Solidtime config.** Variables belong to a *cloud environment*, not to the project, and the built-in **Default** environment can't hold any. At [claude.ai/code](https://claude.ai/code), on the new-session screen, open the environment selector (the first control under the message box) and choose **New environment**; to change one you already have, hover its row under **Cloud** and click the settings icon. In its **Environment variables** row (`.env` format), set:
@@ -91,13 +91,14 @@ Project threads and other cloud sessions run in a throwaway Ubuntu VM. They load
    SOLIDTIME_ORG_ID=...
    ```
    Anyone who can use that environment can read its variables. Use an environment only you use, with a token you can revoke.
-3. **Allow the Solidtime host** in the same dialog: set **Network access** to **Custom** and add your Solidtime host to the allowed domains. The default **Trusted** allowlist blocks it, and every sync then fails with a proxy `403`. Save with **Add environment** or **Save changes**, then pick that environment for the project in **Project settings > Environment**.
+3. **Allow the Solidtime host** in the same dialog: set **Network access** to **Custom**, add your Solidtime host to **Allowed domains**, and **check "Also include default list of common package managers"**. Left unchecked, Custom drops the default allowlist, and npm, PyPI and the other registries your project and its other plugins rely on stop working. The default **Trusted** level blocks the Solidtime host, so without this step every sync fails with a proxy `403`. Save with **Add environment** or **Save changes**, then pick that environment for the project in **Project settings > Environment**.
 4. **Start a new thread** and work normally.
 
 What to expect:
 
 - **Cloud time only reaches Solidtime.** The VM's `~/.session-tracker` disappears with the VM, so cloud threads never show up in your local history, worklog or status line.
 - **Sync runs after every turn**, not at session end, because a paused VM can be reclaimed without the session ever ending. Repeated syncs don't double-post: a turn that extends an earlier time block sends only the new part.
+- **Other plugins are unaffected.** The plugin only adds its own hooks. They print nothing, never block a tool call, always exit 0, and cost a few milliseconds each. A plugin loaded through `CLAUDE_CODE_PLUGIN_DIRS` replaces only a plugin with the same name (`session-tracker`), so if you later add it in **Project settings > Plugins** too, its hooks run once, not twice. The setup script and variables apply to every session that uses that environment, in this project or any other.
 - **No `sqlite3` in the VM.** The store falls back to its JSON-lines file, with nothing for you to set up.
 - **To check a thread**, ask it to run `bash ~/.session-tracker/session-query.sh status`. A `sync.last_error` value points at the problem (network, token or org id). The full log is at `~/.session-tracker/solidtime-sync.log` inside the VM.
 
